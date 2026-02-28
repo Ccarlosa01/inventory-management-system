@@ -4,6 +4,10 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Warehouse — Manager</title>
+
+  <!-- XLSX parser (for catalog upload) -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+
   <style>
     :root { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
     body { margin:0; background:#f6f7fb; color:#111; }
@@ -30,15 +34,20 @@
     button.small { padding:6px 10px; border-radius:9px; font-size:13px; }
 
     table { width:100%; border-collapse: collapse; }
-    th, td { text-align:left; padding:10px 8px; border-bottom:1px solid #eceef3; font-size:13px; }
+    th, td { text-align:left; padding:10px 8px; border-bottom:1px solid #eceef3; font-size:13px; vertical-align:top; }
     th { font-size:12px; color:#555; text-transform: uppercase; letter-spacing:.03em; }
     .pill { display:inline-block; padding:3px 8px; border-radius:999px; font-size:12px; border:1px solid #e1e4ee; }
     .pill.active { background:#ecfdf3; border-color:#abefc6; color:#067647; }
     .pill.disabled { background:#fff1f3; border-color:#fecdd6; color:#b42318; }
     .actions { display:flex; gap:8px; flex-wrap:wrap; }
-    .row { display:flex; gap:10px; }
+    .row { display:flex; gap:10px; align-items:center; }
     .row > * { flex:1; }
     .nowrap { white-space:nowrap; }
+
+    /* Catalog preview table */
+    .tiny th, .tiny td { padding:8px 6px; font-size:12px; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; }
+    .right { text-align:right; }
   </style>
 </head>
 <body>
@@ -56,6 +65,48 @@
   </header>
 
   <main>
+
+    <!-- ================== CATALOG UPLOAD ================== -->
+    <div class="card">
+      <h2>Catalog Upload</h2>
+      <div class="muted">
+        Upload an Excel <span class="mono">.xlsx</span> to replace the Google Sheet tab named <b>catalog</b>.
+        The upload includes metadata fields <span class="mono">importedAt</span>, <span class="mono">importedBy</span>, and <span class="mono">catalogVersion</span>.
+      </div>
+
+      <div class="grid" style="margin-top:12px;">
+        <div>
+          <label>Select .xlsx file</label>
+          <input id="catFile" type="file" accept=".xlsx" />
+        </div>
+        <div>
+          <label>Catalog Version (optional)</label>
+          <input id="catVersion" placeholder="Leave blank to use timestamp" />
+        </div>
+      </div>
+
+      <div class="row" style="margin-top:12px;">
+        <button class="ghost" id="btnCatPreview" type="button">Preview</button>
+
+        <button class="primary" id="btnCatUpload" type="button">
+          <span id="catUploadLabel">Upload (Replace)</span>
+          <span id="catSpinner" style="display:none; margin-left:8px;">⏳</span>
+        </button>
+
+        <div id="catProg" class="muted right" style="margin-left:auto; font-size:13px;"></div>
+      </div>
+
+      <div id="catMsg" class="msg"></div>
+
+      <div style="overflow:auto; margin-top:10px; max-height:260px;">
+        <table class="tiny">
+          <thead id="catHead"></thead>
+          <tbody id="catBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ================== USERS LIST ================== -->
     <div class="card">
       <h2>Users</h2>
       <div class="muted">This list comes from <code>GET /manager/users</code>. You can create users, change role/status, and reset passwords.</div>
@@ -87,10 +138,16 @@
       </div>
     </div>
 
+    <!-- ================== CREATE + RESET (SIDE BY SIDE) ================== -->
     <div class="grid">
       <div class="card">
         <h2>Create User</h2>
-        <div class="muted">Creates user in Sheets via <code>POST /manager/users/create</code>. You supply a password; we hash it on the Worker side if you already have that flow in your UI (for now this expects <b>passHash</b> is already computed in your frontend if you’re doing it there).</div>
+        <div class="muted">
+          Creates user in Sheets via <code>POST /manager/users/create</code>.
+          Your Worker hashes passwords in <code>/users/reset-password</code>, so this UI uses:
+          <br/>1) create user with placeholder hash
+          <br/>2) optionally reset to a temp password
+        </div>
 
         <label>User ID</label>
         <input id="c_userId" placeholder="e.g. u_1007" />
@@ -125,9 +182,7 @@
 
         <div id="createMsg" class="msg"></div>
         <div class="muted" style="margin-top:8px;">
-          Note: Since your Worker hashes passwords, the “Create + set temp password” button will:
-          1) create user with a placeholder hash (so Sheets row exists)  
-          2) call <code>/users/reset-password</code> to set the real password + force mustChangePassword=true.
+          Note: “Create + set temp password” will force <span class="mono">mustChangePassword=true</span>.
         </div>
       </div>
 
@@ -155,11 +210,12 @@
         </div>
       </div>
     </div>
+
   </main>
 
 <script>
   // ====== CONFIG ======
-  const API_BASE = "https://queensims.anthonycr2001.workers.dev"; // <-- set to your Worker
+  const API_BASE = "https://queensims.anthonycr2001.workers.dev";
 
   // ====== helpers ======
   const $ = (id) => document.getElementById(id);
@@ -176,12 +232,18 @@
     return { status: res.status, data };
   }
 
+  function escText(s){
+    return String(s ?? "").replace(/[&<>"']/g, m => ({
+      "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#039;"
+    })[m]);
+  }
+
   function esc(s){ return String(s ?? ""); }
 
   function statusPill(status){
     const s = String(status||"").toLowerCase();
     const cls = s === "active" ? "pill active" : "pill disabled";
-    return `<span class="${cls}">${esc(s||"")}</span>`;
+    return `<span class="${cls}">${escText(s||"")}</span>`;
   }
 
   function normalizeBoolStr(v){
@@ -197,7 +259,6 @@
     const role = String(me.role||"").toLowerCase();
 
     if (normalizeBoolStr(me.mustChangePassword) === "true") {
-      // send them back to login page which has the change-password modal
       location.href = "./index.html";
       return null;
     }
@@ -211,7 +272,101 @@
     return me;
   }
 
-  // ====== users ======
+  // ============================================================
+  // CATALOG UPLOAD
+  // Requires Worker route you’ll add: POST /manager/catalog/upload
+  // body: { rows: [...], catalogVersion? }
+  // ============================================================
+  const CATALOG_HEADERS = [
+    "Store","Item No.","Description","Subdep","Pack Size","Qty On Hand","Qty On PO",
+    "Avg Cost","Base Price","Gross M","Gross M %","Tax No.","Vendor","Track Item","Sales Rep"
+  ];
+
+  let CATALOG_ROWS = [];
+
+  function setUploading(on, text="") {
+    $("btnCatUpload").disabled = on;
+    $("catSpinner").style.display = on ? "inline" : "none";
+    $("catUploadLabel").textContent = on ? "Uploading…" : "Upload (Replace)";
+    $("catProg").textContent = text;
+  }
+
+  function renderCatalogPreview() {
+    $("catHead").innerHTML = `<tr>${CATALOG_HEADERS.map(h=>`<th>${escText(h)}</th>`).join("")}</tr>`;
+    const sample = CATALOG_ROWS.slice(0, 25);
+    $("catBody").innerHTML = sample.map(r => {
+      const row = (Array.isArray(r) ? r : []).slice(0, 15);
+      while (row.length < 15) row.push("");
+      return `<tr>${row.map(c=>`<td>${escText(c)}</td>`).join("")}</tr>`;
+    }).join("");
+  }
+
+  async function parseCatalogFile() {
+    const file = $("catFile").files?.[0];
+    if (!file) { setMsg($("catMsg"), "Choose a .xlsx file first.", false); return false; }
+
+    const buf = await file.arrayBuffer();
+    const wb = XLSX.read(buf, { type:"array" });
+    const sheet = wb.Sheets[wb.SheetNames[0]];
+    const aoa = XLSX.utils.sheet_to_json(sheet, { header:1, defval:"" });
+
+    // skip header row; keep first 15 columns
+    CATALOG_ROWS = aoa.slice(1).map(r => (Array.isArray(r) ? r.slice(0, 15) : []));
+    renderCatalogPreview();
+    setMsg($("catMsg"), `Parsed ${CATALOG_ROWS.length} rows.`, true);
+    return true;
+  }
+
+  async function uploadCatalog() {
+    if (!CATALOG_ROWS.length) {
+      const ok = await parseCatalogFile();
+      if (!ok) return;
+    }
+
+    const version = $("catVersion").value.trim();
+    setUploading(true, `Uploading ${CATALOG_ROWS.length} rows…`);
+    setMsg($("catMsg"), "Uploading…", true);
+
+    // Simple “progress” effect (just animated dots)
+    let dots = 0;
+    const t = setInterval(() => {
+      dots = (dots + 1) % 4;
+      $("catProg").textContent = `Uploading ${CATALOG_ROWS.length} rows${".".repeat(dots)}`;
+    }, 350);
+
+    try {
+      const { data } = await api("/manager/catalog/upload", {
+        method:"POST",
+        body: { rows: CATALOG_ROWS, ...(version ? { catalogVersion: version } : {}) }
+      });
+
+      clearInterval(t);
+
+      if (!data?.ok) {
+        setUploading(false, "Failed");
+        setMsg($("catMsg"), data?.error || "UPLOAD_FAILED", false);
+        return;
+      }
+
+      setUploading(false, `Done (${data.rowCount ?? CATALOG_ROWS.length})`);
+      setMsg($("catMsg"), `✅ Uploaded ${data.rowCount ?? CATALOG_ROWS.length} rows to catalog.`, true);
+
+      // optional: clear file input after success
+      $("catFile").value = "";
+      $("catVersion").value = "";
+      CATALOG_ROWS = [];
+      $("catBody").innerHTML = "";
+      $("catHead").innerHTML = "";
+    } catch (e) {
+      clearInterval(t);
+      setUploading(false, "Failed");
+      setMsg($("catMsg"), "UPLOAD_FAILED", false);
+    }
+  }
+
+  // ============================================================
+  // USERS
+  // ============================================================
   let USERS = [];
 
   function renderUsers() {
@@ -237,19 +392,19 @@
       return `
         <tr>
           <td>
-            <div><b>${esc(u.username)}</b></div>
-            <div class="muted">${esc(u.userId)}</div>
+            <div><b>${escText(u.username)}</b></div>
+            <div class="muted">${escText(u.userId)}</div>
           </td>
-          <td>${esc(role)}</td>
+          <td>${escText(role)}</td>
           <td>${statusPill(status)}</td>
-          <td>${mcp}</td>
-          <td class="muted">${esc(u.createdAt||"")}</td>
-          <td class="muted">${esc(u.lastLoginAt||"")}</td>
+          <td>${escText(mcp)}</td>
+          <td class="muted">${escText(u.createdAt||"")}</td>
+          <td class="muted">${escText(u.lastLoginAt||"")}</td>
           <td class="nowrap">
             <div class="actions">
-              <button class="ghost small" data-act="role" data-id="${esc(u.userId)}" data-role="${role}">Toggle role</button>
-              <button class="ghost small" data-act="status" data-id="${esc(u.userId)}" data-status="${status}">Toggle status</button>
-              <button class="ghost small" data-act="reset" data-id="${esc(u.userId)}" data-user="${esc(u.username)}">Reset pw</button>
+              <button class="ghost small" data-act="role" data-id="${escText(u.userId)}" data-role="${escText(role)}">Toggle role</button>
+              <button class="ghost small" data-act="status" data-id="${escText(u.userId)}" data-status="${escText(status)}">Toggle status</button>
+              <button class="ghost small" data-act="reset" data-id="${escText(u.userId)}" data-user="${escText(u.username)}">Reset pw</button>
             </div>
           </td>
         </tr>
@@ -268,7 +423,6 @@
       return;
     }
 
-    // Expect: { ok:true, users:[...] }
     USERS = Array.isArray(data.users) ? data.users : (Array.isArray(data.list) ? data.list : []);
     renderUsers();
     setMsg($("usersMsg"), `Loaded ${USERS.length} users.`, true);
@@ -289,7 +443,6 @@
   }
 
   async function resetPasswordFor(userId, username) {
-    // quick prompt + call /users/reset-password (manager path uses userId or username + newTempPassword)
     const newTempPassword = prompt(`Set a TEMP password for ${username} (${userId})`, "Temp123!");
     if (!newTempPassword) return;
 
@@ -300,10 +453,6 @@
   }
 
   // ====== Create user flow ======
-  // Your /manager/users/create expects passHash already.
-  // Since your Worker hashes in reset-password, easiest safe pattern:
-  // - Create user with a placeholder passHash (valid pbkdf2 format)
-  // - Immediately call /users/reset-password with newTempPassword (Worker will hash properly)
   const PLACEHOLDER_PASSHASH = "pbkdf2$100000$AAAAAAAAAAAAAAAAAAAAAA==$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
 
   async function createUser({ alsoReset=false }) {
@@ -315,7 +464,6 @@
 
     if (!userId || !username) return setMsg($("createMsg"), "userId + username required.", false);
     if (!role || !status) return setMsg($("createMsg"), "role + status required.", false);
-
     if (alsoReset && !tempPlain) return setMsg($("createMsg"), "Temp password required for Create + Reset.", false);
 
     setMsg($("createMsg"), "Creating…", true);
@@ -349,7 +497,6 @@
     await loadUsers();
   }
 
-  // ====== Reset password box ======
   async function resetFromBox() {
     const kind = $("r_kind").value; // userId | username
     const target = $("r_target").value.trim();
@@ -371,7 +518,7 @@
   }
 
   // ====== events ======
-  $("btnRefresh").addEventListener("click", loadUsers);
+  $("btnRefresh").addEventListener("click", () => { loadUsers(); });
   $("btnClearFilter").addEventListener("click", () => { $("filter").value=""; renderUsers(); });
   $("filter").addEventListener("input", renderUsers);
 
@@ -395,6 +542,9 @@
     if (act === "status") return toggleStatus(id, btn.getAttribute("data-status"));
     if (act === "reset") return resetPasswordFor(id, btn.getAttribute("data-user"));
   });
+
+  $("btnCatPreview").addEventListener("click", parseCatalogFile);
+  $("btnCatUpload").addEventListener("click", uploadCatalog);
 
   // boot
   (async () => {
