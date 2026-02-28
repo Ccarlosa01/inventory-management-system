@@ -551,6 +551,28 @@
 
   // ====== Global dropdown (floating) ======
   const DD = $("globalDropdown");
+
+  // ✅ Allow mouse selection from the floating dropdown (since it's outside the table)
+  DD.addEventListener("mousedown", (e) => {
+    // Use mousedown so it fires before input blur hides the dropdown
+    const pick = e.target.closest(".suggestItem[data-act='pickSuggest']");
+    if (!pick) return;
+  
+    e.preventDefault(); // prevents focus/blur weirdness
+    e.stopPropagation();
+  
+    const tr = ddState.tr;
+    if (!tr) return;
+  
+    const itemNo = pick.getAttribute("data-itemno") || "";
+    const description = pick.getAttribute("data-desc") || "";
+  
+    // Run async without blocking the event
+    (async () => {
+      await applyCatalogPick(tr, { itemNo, description });
+    })();
+  });
+  
   const ddState = {
     open: false,
     anchor: null,      // input element (.i_desc)
@@ -757,15 +779,6 @@
         renderItems(items.length ? items : [{ itemNo:"", description:"", bpc: 1, cases: 0, each: 0 }]);
         return;
       }
-    }
-
-    const pick = e.target.closest(".suggestItem");
-    if (pick && pick.getAttribute("data-act") === "pickSuggest") {
-      const tr = ddState.tr;
-      if (!tr) return;
-      const itemNo = pick.getAttribute("data-itemno") || "";
-      const description = pick.getAttribute("data-desc") || "";
-      await applyCatalogPick(tr, { itemNo, description });
     }
   });
 
