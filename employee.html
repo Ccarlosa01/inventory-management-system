@@ -479,23 +479,32 @@
   async function getBpcOverride(itemNo) {
     const key = String(itemNo || "").trim();
     if (!key) return { ok:false, found:false };
-
+  
+    // Cache hit first
     if (BPC_CACHE.has(key)) {
       return { ok:true, found:true, bpc: BPC_CACHE.get(key) };
     }
-
+  
     const { data } = await api(`/bpc-overrides/get?itemNo=${encodeURIComponent(key)}`);
     if (!data?.ok) return { ok:false, found:false };
-
-    const found = !!data.found;
-    const bpc = Number(data.bpc);
-
-    if (found && Number.isFinite(bpc) && Math.trunc(bpc) >= 1) {
-      const v = Math.trunc(bpc);
-      BPC_CACHE.set(key, v);
-      return { ok:true, found:true, bpc: v };
+  
+    // Some backends return { ok:true, found:true, bpc:12 }
+    // Others might return { ok:true, bpc:12 } (no "found")
+    // Or return bpc as a string. Handle all.
+    const bpcNum = Math.trunc(Number(
+      data.bpc ?? data.value ?? data.overrideBpc ?? data.result?.bpc ?? ""
+    ));
+  
+    const found =
+      (data.found === undefined)
+        ? (Number.isFinite(bpcNum) && bpcNum >= 1)   // infer found
+        : !!data.found;
+  
+    if (found && Number.isFinite(bpcNum) && bpcNum >= 1) {
+      BPC_CACHE.set(key, bpcNum);
+      return { ok:true, found:true, bpc: bpcNum };
     }
-
+  
     return { ok:true, found:false };
   }
 
