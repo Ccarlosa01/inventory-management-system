@@ -4,10 +4,6 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Warehouse — Manager</title>
-
-  <!-- XLSX parser -->
-  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-
   <style>
     :root { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
     body { margin:0; background:#f6f7fb; color:#111; }
@@ -16,9 +12,7 @@
     header h1 { margin:0; font-size:18px; }
     header .me { font-size:13px; opacity:.92; }
     header button { background:#ffffff22; color:#fff; border:1px solid #ffffff33; padding:8px 10px; border-radius:10px; cursor:pointer; }
-
     main { max-width: 1100px; margin: 18px auto; padding: 0 16px 28px; display:grid; gap:16px; }
-
     .card { background:#fff; border-radius:14px; padding:14px; box-shadow: 0 8px 24px rgba(0,0,0,.08); }
     h2 { margin:0 0 10px; font-size:16px; }
     .muted { color:#555; font-size:13px; line-height:1.35; }
@@ -31,250 +25,383 @@
 
     label { display:block; font-size:13px; margin:10px 0 6px; color:#222; }
     input, select { width:100%; padding:10px 12px; border:1px solid #d6d8e0; border-radius:10px; font-size:14px; }
-
     button.primary { background:#1f6feb; color:#fff; border:0; padding:10px 12px; border-radius:10px; cursor:pointer; }
     button.ghost { background:transparent; color:#1f6feb; border:1px solid #cfe0ff; padding:10px 12px; border-radius:10px; cursor:pointer; }
     button.small { padding:6px 10px; border-radius:9px; font-size:13px; }
 
     table { width:100%; border-collapse: collapse; }
-    th, td { text-align:left; padding:10px 8px; border-bottom:1px solid #eceef3; font-size:13px; vertical-align:top; }
+    th, td { text-align:left; padding:10px 8px; border-bottom:1px solid #eceef3; font-size:13px; }
     th { font-size:12px; color:#555; text-transform: uppercase; letter-spacing:.03em; }
-
     .pill { display:inline-block; padding:3px 8px; border-radius:999px; font-size:12px; border:1px solid #e1e4ee; }
     .pill.active { background:#ecfdf3; border-color:#abefc6; color:#067647; }
     .pill.disabled { background:#fff1f3; border-color:#fecdd6; color:#b42318; }
-
     .actions { display:flex; gap:8px; flex-wrap:wrap; }
-    .row { display:flex; gap:10px; align-items:center; }
+    .row { display:flex; gap:10px; }
     .row > * { flex:1; }
     .nowrap { white-space:nowrap; }
-    .mono { font-family: ui-monospace, monospace; }
-    .tiny th, .tiny td { padding:8px 6px; font-size:12px; }
   </style>
 </head>
 <body>
-
-<header>
-  <div class="top">
-    <div>
-      <h1>Manager Dashboard</h1>
-      <div class="me" id="meLine">Loading session…</div>
-    </div>
-    <div class="actions">
-      <button id="btnRefresh">Refresh</button>
-      <button id="btnLogout">Logout</button>
-    </div>
-  </div>
-</header>
-
-<main>
-
-  <!-- ================== CATALOG UPLOAD ================== -->
-  <div class="card">
-    <h2>Catalog Upload</h2>
-    <div class="muted">
-      Upload an Excel <span class="mono">.xlsx</span> to replace the Google Sheet tab named <b>catalog</b>.
-    </div>
-
-    <div class="grid" style="margin-top:12px;">
+  <header>
+    <div class="top">
       <div>
-        <label>Select .xlsx file</label>
-        <input id="catFile" type="file" accept=".xlsx" />
+        <h1>Manager Dashboard</h1>
+        <div class="me" id="meLine">Loading session…</div>
       </div>
-      <div>
-        <label>Catalog Version (optional)</label>
-        <input id="catVersion" placeholder="Leave blank to use timestamp" />
+      <div class="actions">
+        <button id="btnRefresh">Refresh</button>
+        <button id="btnLogout">Logout</button>
       </div>
     </div>
+  </header>
 
-    <div class="row" style="margin-top:12px;">
-      <button class="ghost" id="btnCatPreview" type="button">Preview</button>
+  <main>
+    <div class="card">
+      <h2>Users</h2>
+      <div class="muted">This list comes from <code>GET /manager/users</code>. You can create users, change role/status, and reset passwords.</div>
 
-      <button class="primary" id="btnCatUpload" type="button">
-        <span id="catUploadLabel">Upload (Replace)</span>
-        <span id="catSpinner" style="display:none; margin-left:8px;">⏳</span>
-      </button>
+      <div class="row" style="margin-top:12px;">
+        <input id="filter" placeholder="Filter by username, userId, role, status…" />
+        <button class="ghost" id="btnClearFilter" type="button">Clear</button>
+      </div>
 
-      <div id="catProg" class="muted" style="margin-left:auto; font-size:13px;"></div>
+      <div id="usersMsg" class="msg"></div>
+
+      <div style="overflow:auto; margin-top:10px;">
+        <table>
+          <thead>
+            <tr>
+              <th>User</th>
+              <th>Role</th>
+              <th>Status</th>
+              <th>Must Change Pw</th>
+              <th>Created</th>
+              <th>Last Login</th>
+              <th class="nowrap">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="usersTbody">
+            <tr><td colspan="7" class="muted">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
     </div>
 
-    <div id="catMsg" class="msg"></div>
+    <div class="grid">
+      <div class="card">
+        <h2>Create User</h2>
+        <div class="muted">Creates user in Sheets via <code>POST /manager/users/create</code>. You supply a password; we hash it on the Worker side if you already have that flow in your UI (for now this expects <b>passHash</b> is already computed in your frontend if you’re doing it there).</div>
 
-    <div style="overflow:auto; margin-top:10px; max-height:260px;">
-      <table class="tiny">
-        <thead id="catHead"></thead>
-        <tbody id="catBody"></tbody>
-      </table>
+        <label>User ID</label>
+        <input id="c_userId" placeholder="e.g. u_1007" />
+
+        <label>Username</label>
+        <input id="c_username" placeholder="e.g. queens" />
+
+        <div class="row">
+          <div>
+            <label>Role</label>
+            <select id="c_role">
+              <option value="employee">employee</option>
+              <option value="manager">manager</option>
+            </select>
+          </div>
+          <div>
+            <label>Status</label>
+            <select id="c_status">
+              <option value="active">active</option>
+              <option value="disabled">disabled</option>
+            </select>
+          </div>
+        </div>
+
+        <label>Temporary password (plain)</label>
+        <input id="c_plain" type="password" placeholder="We’ll set this via reset-password after create" />
+
+        <div class="row">
+          <button class="primary" id="btnCreate" type="button">Create user</button>
+          <button class="ghost" id="btnCreateAndReset" type="button">Create + set temp password</button>
+        </div>
+
+        <div id="createMsg" class="msg"></div>
+        <div class="muted" style="margin-top:8px;">
+          Note: Since your Worker hashes passwords, the “Create + set temp password” button will:
+          1) create user with a placeholder hash (so Sheets row exists)  
+          2) call <code>/users/reset-password</code> to set the real password + force mustChangePassword=true.
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Reset Password</h2>
+        <div class="muted">Manager can reset anyone by <code>userId</code> or <code>username</code> via <code>POST /users/reset-password</code>.</div>
+
+        <label>Target (userId OR username)</label>
+        <input id="r_target" placeholder="u_1007 or queens" />
+
+        <label>Choose field type</label>
+        <select id="r_kind">
+          <option value="userId">userId</option>
+          <option value="username">username</option>
+        </select>
+
+        <label>New temporary password</label>
+        <input id="r_newTemp" type="password" placeholder="Temp123!" />
+
+        <button class="primary" id="btnReset" type="button">Reset password</button>
+        <div id="resetMsg" class="msg"></div>
+
+        <div class="muted" style="margin-top:8px;">
+          After reset, user will be forced to change password on next login (mustChangePassword=true).
+        </div>
+      </div>
     </div>
-  </div>
-
-  <!-- ================== USERS ================== -->
-  <div class="card">
-    <h2>Users</h2>
-
-    <div class="row" style="margin-top:12px;">
-      <input id="filter" placeholder="Filter by username, userId, role, status…" />
-      <button class="ghost" id="btnClearFilter">Clear</button>
-    </div>
-
-    <div id="usersMsg" class="msg"></div>
-
-    <div style="overflow:auto; margin-top:10px;">
-      <table>
-        <thead>
-          <tr>
-            <th>User</th>
-            <th>Role</th>
-            <th>Status</th>
-            <th>Must Change Pw</th>
-            <th>Created</th>
-            <th>Last Login</th>
-            <th class="nowrap">Actions</th>
-          </tr>
-        </thead>
-        <tbody id="usersTbody">
-          <tr><td colspan="7" class="muted">Loading…</td></tr>
-        </tbody>
-      </table>
-    </div>
-  </div>
-
-</main>
+  </main>
 
 <script>
-const API_BASE = "https://queensims.anthonycr2001.workers.dev";
+  // ====== CONFIG ======
+  const API_BASE = "https://queensims.anthonycr2001.workers.dev"; // <-- set to your Worker
 
-const $ = id => document.getElementById(id);
-const setMsg = (el, text, ok=false) => {
-  el.textContent = text || "";
-  el.className = "msg " + (ok ? "ok" : "err");
-};
+  // ====== helpers ======
+  const $ = (id) => document.getElementById(id);
+  const setMsg = (el, text, ok=false) => { el.textContent = text || ""; el.className = "msg " + (ok ? "ok" : "err"); };
 
-async function api(path, {method="GET", body=null}={}) {
-  const res = await fetch(API_BASE + path, {
-    method,
-    credentials:"include",
-    headers:{ "Content-Type":"application/json" },
-    body: body ? JSON.stringify(body) : null
-  });
-  const data = await res.json().catch(()=>({}));
-  return {status:res.status, data};
-}
-
-/* ================= AUTH GUARD ================= */
-(async()=>{
-  const {data} = await api("/me");
-  if(!data?.ok || data.me.role !== "manager"){
-    location.href="./index.html";
-    return;
-  }
-  $("meLine").textContent = `Signed in as ${data.me.username} (${data.me.role})`;
-})();
-
-/* ================= CATALOG ================= */
-
-let CATALOG_ROWS = [];
-const HEADERS = ["Store","Item No.","Description","Subdep","Pack Size","Qty On Hand","Qty On PO","Avg Cost","Base Price","Gross M","Gross M %","Tax No.","Vendor","Track Item","Sales Rep"];
-
-function esc(s){
-  return String(s ?? "").replace(/[&<>"']/g, m => ({
-    "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#039;"
-  })[m]);
-}
-
-async function parseFile(){
-  const file = $("catFile").files?.[0];
-  if(!file){ setMsg($("catMsg"),"Choose a file.",false); return false; }
-
-  const buf = await file.arrayBuffer();
-  const wb = XLSX.read(buf,{type:"array"});
-  const sheet = wb.Sheets[wb.SheetNames[0]];
-  const aoa = XLSX.utils.sheet_to_json(sheet,{header:1,defval:""});
-
-  CATALOG_ROWS = aoa.slice(1).map(r=>r.slice(0,15));
-  renderPreview();
-  setMsg($("catMsg"),`Parsed ${CATALOG_ROWS.length} rows.`,true);
-  return true;
-}
-
-function renderPreview(){
-  $("catHead").innerHTML = `<tr>${HEADERS.map(h=>`<th>${h}</th>`).join("")}</tr>`;
-  $("catBody").innerHTML = CATALOG_ROWS.slice(0,25).map(r=>`<tr>${r.map(c=>`<td>${esc(c)}</td>`).join("")}</tr>`).join("");
-}
-
-function setUploading(on,text=""){
-  $("btnCatUpload").disabled = on;
-  $("catSpinner").style.display = on?"inline":"none";
-  $("catUploadLabel").textContent = on?"Uploading…":"Upload (Replace)";
-  $("catProg").textContent = text;
-}
-
-$("btnCatPreview").onclick = parseFile;
-
-$("btnCatUpload").onclick = async ()=>{
-  if(!CATALOG_ROWS.length){
-    const ok = await parseFile();
-    if(!ok) return;
+  async function api(path, { method="GET", body=null } = {}) {
+    const res = await fetch(API_BASE + path, {
+      method,
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: body ? JSON.stringify(body) : null
+    });
+    const data = await res.json().catch(() => ({}));
+    return { status: res.status, data };
   }
 
-  setUploading(true,`Uploading ${CATALOG_ROWS.length} rows…`);
+  function esc(s){ return String(s ?? ""); }
 
-  try{
-    const {data} = await api("/manager/catalog/upload",{
-      method:"POST",
-      body:{ rows:CATALOG_ROWS, catalogVersion:$("catVersion").value.trim()||undefined }
+  function statusPill(status){
+    const s = String(status||"").toLowerCase();
+    const cls = s === "active" ? "pill active" : "pill disabled";
+    return `<span class="${cls}">${esc(s||"")}</span>`;
+  }
+
+  function normalizeBoolStr(v){
+    return String(v||"").toLowerCase() === "true" ? "true" : "false";
+  }
+
+  // ====== auth guard ======
+  async function guardManager() {
+    const { data } = await api("/me");
+    if (!data?.ok) { location.href = "./index.html"; return null; }
+
+    const me = data.me || {};
+    const role = String(me.role||"").toLowerCase();
+
+    if (normalizeBoolStr(me.mustChangePassword) === "true") {
+      // send them back to login page which has the change-password modal
+      location.href = "./index.html";
+      return null;
+    }
+
+    if (role !== "manager") {
+      location.href = "./employee.html";
+      return null;
+    }
+
+    $("meLine").textContent = `Signed in as ${me.username} (${me.role})`;
+    return me;
+  }
+
+  // ====== users ======
+  let USERS = [];
+
+  function renderUsers() {
+    const f = $("filter").value.trim().toLowerCase();
+    const list = !f ? USERS : USERS.filter(u => {
+      const blob = [
+        u.userId, u.username, u.role, u.status, u.mustChangePassword, u.createdAt, u.lastLoginAt
+      ].map(x => String(x||"").toLowerCase()).join(" | ");
+      return blob.includes(f);
     });
 
-    if(!data?.ok){
-      setUploading(false,"Failed");
-      setMsg($("catMsg"),data?.error||"Upload failed",false);
+    const tbody = $("usersTbody");
+    if (!list.length) {
+      tbody.innerHTML = `<tr><td colspan="7" class="muted">No users found.</td></tr>`;
       return;
     }
 
-    setUploading(false,`Done (${data.rowCount})`);
-    setMsg($("catMsg"),`✅ Uploaded ${data.rowCount} rows.`,true);
-  }catch(e){
-    setUploading(false,"Failed");
-    setMsg($("catMsg"),"Upload failed",false);
+    tbody.innerHTML = list.map(u => {
+      const role = String(u.role||"").toLowerCase();
+      const status = String(u.status||"").toLowerCase();
+      const mcp = normalizeBoolStr(u.mustChangePassword);
+
+      return `
+        <tr>
+          <td>
+            <div><b>${esc(u.username)}</b></div>
+            <div class="muted">${esc(u.userId)}</div>
+          </td>
+          <td>${esc(role)}</td>
+          <td>${statusPill(status)}</td>
+          <td>${mcp}</td>
+          <td class="muted">${esc(u.createdAt||"")}</td>
+          <td class="muted">${esc(u.lastLoginAt||"")}</td>
+          <td class="nowrap">
+            <div class="actions">
+              <button class="ghost small" data-act="role" data-id="${esc(u.userId)}" data-role="${role}">Toggle role</button>
+              <button class="ghost small" data-act="status" data-id="${esc(u.userId)}" data-status="${status}">Toggle status</button>
+              <button class="ghost small" data-act="reset" data-id="${esc(u.userId)}" data-user="${esc(u.username)}">Reset pw</button>
+            </div>
+          </td>
+        </tr>
+      `;
+    }).join("");
   }
-};
 
-/* ================= USERS ================= */
+  async function loadUsers() {
+    setMsg($("usersMsg"), "", true);
+    $("usersTbody").innerHTML = `<tr><td colspan="7" class="muted">Loading…</td></tr>`;
 
-let USERS=[];
+    const { data } = await api("/manager/users");
+    if (!data?.ok) {
+      setMsg($("usersMsg"), data?.error || "LOAD_FAILED", false);
+      $("usersTbody").innerHTML = `<tr><td colspan="7" class="muted">Failed to load.</td></tr>`;
+      return;
+    }
 
-async function loadUsers(){
-  const {data}=await api("/manager/users");
-  if(!data?.ok){
-    $("usersTbody").innerHTML=`<tr><td colspan="7">Failed</td></tr>`;
-    return;
+    // Expect: { ok:true, users:[...] }
+    USERS = Array.isArray(data.users) ? data.users : (Array.isArray(data.list) ? data.list : []);
+    renderUsers();
+    setMsg($("usersMsg"), `Loaded ${USERS.length} users.`, true);
   }
-  USERS=data.users||data.list||[];
-  renderUsers();
-}
 
-function renderUsers(){
-  $("usersTbody").innerHTML=USERS.map(u=>`
-    <tr>
-      <td><b>${esc(u.username)}</b><div class="muted">${esc(u.userId)}</div></td>
-      <td>${esc(u.role)}</td>
-      <td>${esc(u.status)}</td>
-      <td>${esc(u.mustChangePassword)}</td>
-      <td>${esc(u.createdAt||"")}</td>
-      <td>${esc(u.lastLoginAt||"")}</td>
-      <td></td>
-    </tr>
-  `).join("");
-}
+  async function toggleRole(userId, currentRole) {
+    const next = currentRole === "manager" ? "employee" : "manager";
+    const { data } = await api("/manager/users/set-role", { method:"POST", body:{ userId, role: next } });
+    if (!data?.ok) return alert(`Failed: ${data?.error || "SET_ROLE_FAILED"}`);
+    await loadUsers();
+  }
 
-$("btnRefresh").onclick=loadUsers;
-$("btnLogout").onclick=async()=>{
-  await api("/auth/logout",{method:"POST"});
-  location.href="./index.html";
-};
+  async function toggleStatus(userId, currentStatus) {
+    const next = currentStatus === "active" ? "disabled" : "active";
+    const { data } = await api("/manager/users/set-status", { method:"POST", body:{ userId, status: next } });
+    if (!data?.ok) return alert(`Failed: ${data?.error || "SET_STATUS_FAILED"}`);
+    await loadUsers();
+  }
 
-loadUsers();
+  async function resetPasswordFor(userId, username) {
+    // quick prompt + call /users/reset-password (manager path uses userId or username + newTempPassword)
+    const newTempPassword = prompt(`Set a TEMP password for ${username} (${userId})`, "Temp123!");
+    if (!newTempPassword) return;
+
+    const { data } = await api("/users/reset-password", { method:"POST", body:{ userId, newTempPassword } });
+    if (!data?.ok) return alert(`Reset failed: ${data?.error || "RESET_FAILED"}`);
+    alert("Password reset OK. User will be forced to change password on next login.");
+    await loadUsers();
+  }
+
+  // ====== Create user flow ======
+  // Your /manager/users/create expects passHash already.
+  // Since your Worker hashes in reset-password, easiest safe pattern:
+  // - Create user with a placeholder passHash (valid pbkdf2 format)
+  // - Immediately call /users/reset-password with newTempPassword (Worker will hash properly)
+  const PLACEHOLDER_PASSHASH = "pbkdf2$100000$AAAAAAAAAAAAAAAAAAAAAA==$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+
+  async function createUser({ alsoReset=false }) {
+    const userId = $("c_userId").value.trim();
+    const username = $("c_username").value.trim();
+    const role = $("c_role").value;
+    const status = $("c_status").value;
+    const tempPlain = $("c_plain").value;
+
+    if (!userId || !username) return setMsg($("createMsg"), "userId + username required.", false);
+    if (!role || !status) return setMsg($("createMsg"), "role + status required.", false);
+
+    if (alsoReset && !tempPlain) return setMsg($("createMsg"), "Temp password required for Create + Reset.", false);
+
+    setMsg($("createMsg"), "Creating…", true);
+
+    const { data } = await api("/manager/users/create", {
+      method:"POST",
+      body: {
+        userId,
+        username,
+        role,
+        status,
+        passHash: PLACEHOLDER_PASSHASH,
+        mustChangePassword: "true"
+      }
+    });
+
+    if (!data?.ok) return setMsg($("createMsg"), data?.error || "CREATE_FAILED", false);
+
+    if (alsoReset) {
+      setMsg($("createMsg"), "Created. Setting temp password…", true);
+      const r = await api("/users/reset-password", { method:"POST", body:{ userId, newTempPassword: tempPlain } });
+      if (!r.data?.ok) return setMsg($("createMsg"), r.data?.error || "RESET_FAILED", false);
+      setMsg($("createMsg"), "User created + temp password set (must change on login).", true);
+    } else {
+      setMsg($("createMsg"), "User created. Now set temp password in the Reset Password box.", true);
+    }
+
+    $("c_userId").value = "";
+    $("c_username").value = "";
+    $("c_plain").value = "";
+    await loadUsers();
+  }
+
+  // ====== Reset password box ======
+  async function resetFromBox() {
+    const kind = $("r_kind").value; // userId | username
+    const target = $("r_target").value.trim();
+    const newTempPassword = $("r_newTemp").value.trim();
+
+    if (!target) return setMsg($("resetMsg"), "Target required.", false);
+    if (!newTempPassword) return setMsg($("resetMsg"), "New temp password required.", false);
+
+    const body = { newTempPassword };
+    body[kind] = target;
+
+    setMsg($("resetMsg"), "Resetting…", true);
+    const { data } = await api("/users/reset-password", { method:"POST", body });
+    if (!data?.ok) return setMsg($("resetMsg"), data?.error || "RESET_FAILED", false);
+
+    setMsg($("resetMsg"), "Reset OK. User must change password on next login.", true);
+    $("r_newTemp").value = "";
+    await loadUsers();
+  }
+
+  // ====== events ======
+  $("btnRefresh").addEventListener("click", loadUsers);
+  $("btnClearFilter").addEventListener("click", () => { $("filter").value=""; renderUsers(); });
+  $("filter").addEventListener("input", renderUsers);
+
+  $("btnLogout").addEventListener("click", async () => {
+    await api("/auth/logout", { method:"POST" });
+    location.href = "./index.html";
+  });
+
+  $("btnCreate").addEventListener("click", () => createUser({ alsoReset:false }));
+  $("btnCreateAndReset").addEventListener("click", () => createUser({ alsoReset:true }));
+  $("btnReset").addEventListener("click", resetFromBox);
+
+  $("usersTbody").addEventListener("click", async (e) => {
+    const btn = e.target.closest("button");
+    if (!btn) return;
+    const act = btn.getAttribute("data-act");
+    const id = btn.getAttribute("data-id");
+    if (!act || !id) return;
+
+    if (act === "role") return toggleRole(id, btn.getAttribute("data-role"));
+    if (act === "status") return toggleStatus(id, btn.getAttribute("data-status"));
+    if (act === "reset") return resetPasswordFor(id, btn.getAttribute("data-user"));
+  });
+
+  // boot
+  (async () => {
+    const me = await guardManager();
+    if (!me) return;
+    await loadUsers();
+  })();
 </script>
-
 </body>
 </html>
