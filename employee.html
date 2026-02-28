@@ -1,0 +1,702 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Warehouse — Employee</title>
+  <style>
+    :root { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
+    body { margin:0; background:#f6f7fb; color:#111; }
+    header { background:#0b1b3a; color:#fff; padding:14px 18px; }
+    header .top { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+    header h1 { margin:0; font-size:18px; }
+    header .me { font-size:13px; opacity:.92; }
+    header button { background:#ffffff22; color:#fff; border:1px solid #ffffff33; padding:8px 10px; border-radius:10px; cursor:pointer; }
+    main { max-width: 1100px; margin: 18px auto; padding: 0 16px 28px; display:grid; gap:16px; }
+    .card { background:#fff; border-radius:14px; padding:14px; box-shadow: 0 8px 24px rgba(0,0,0,.08); }
+    h2 { margin:0 0 10px; font-size:16px; }
+    .muted { color:#555; font-size:13px; line-height:1.35; }
+    .msg { margin-top:10px; font-size:13px; }
+    .err { color:#b42318; }
+    .ok { color:#067647; }
+
+    .grid { display:grid; grid-template-columns: 1fr 1fr; gap:12px; }
+    @media (max-width: 900px){ .grid { grid-template-columns: 1fr; } }
+
+    label { display:block; font-size:13px; margin:10px 0 6px; color:#222; }
+    input, select, textarea { width:100%; padding:10px 12px; border:1px solid #d6d8e0; border-radius:10px; font-size:14px; box-sizing:border-box; }
+    textarea { min-height: 90px; resize: vertical; }
+    button.primary { background:#1f6feb; color:#fff; border:0; padding:10px 12px; border-radius:10px; cursor:pointer; }
+    button.ghost { background:transparent; color:#1f6feb; border:1px solid #cfe0ff; padding:10px 12px; border-radius:10px; cursor:pointer; }
+    button.small { padding:6px 10px; border-radius:9px; font-size:13px; }
+    button:disabled { opacity:.6; cursor:not-allowed; }
+
+    table { width:100%; border-collapse: collapse; }
+    th, td { text-align:left; padding:10px 8px; border-bottom:1px solid #eceef3; font-size:13px; vertical-align: top; }
+    th { font-size:12px; color:#555; text-transform: uppercase; letter-spacing:.03em; }
+    .actions { display:flex; gap:8px; flex-wrap:wrap; }
+    .row { display:flex; gap:10px; }
+    .row > * { flex:1; }
+    .nowrap { white-space:nowrap; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+    .right { text-align:right; }
+    .tiny { font-size:12px; opacity:.9; }
+    .badge { display:inline-block; padding:4px 8px; border-radius:999px; background:#eef2ff; border:1px solid #dbe4ff; font-size:12px; color:#1f3fbf; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="top">
+      <div>
+        <h1>Employee Dashboard</h1>
+        <div class="me" id="meLine">Loading session…</div>
+      </div>
+      <div class="actions">
+        <button id="btnRefreshConfig">Refresh</button>
+        <button id="btnLogout">Logout</button>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <!-- Password reset (self) -->
+    <div class="card">
+      <h2>Reset My Password</h2>
+      <div class="muted">
+        This sets a <b>temporary password</b> for your own account via <code>POST /users/reset-password</code>.
+        After doing this, you’ll be required to change your password on the login screen.
+      </div>
+
+      <label>New temporary password</label>
+      <input id="pw_newTemp" type="password" placeholder="Temp123!" />
+
+      <div class="row" style="margin-top:10px;">
+        <button class="primary" id="btnResetSelf" type="button">Reset my password</button>
+        <button class="ghost" id="btnClearPw" type="button">Clear</button>
+      </div>
+
+      <div id="pwMsg" class="msg"></div>
+    </div>
+
+    <!-- Pallet editor -->
+    <div class="card">
+      <h2>Pallet Editor</h2>
+      <div class="muted">
+        Load a pallet header via <code>GET /public/pallets/:pallet</code>, edit items, and save via
+        <code>POST /employee/pallets/:pallet/save</code>.
+      </div>
+
+      <div class="row" style="margin-top:12px;">
+        <div>
+          <label>Pallet # <span class="tiny" id="palletMaxNote"></span></label>
+          <input id="palletNo" inputmode="numeric" placeholder="e.g. 12" />
+        </div>
+        <div>
+          <label>Saved By (optional)</label>
+          <input id="savedBy" placeholder="defaults to your username" />
+        </div>
+      </div>
+
+      <div class="actions" style="margin-top:10px;">
+        <button class="primary" id="btnLoadPallet" type="button">Load pallet</button>
+        <button class="ghost" id="btnAddRow" type="button">Add row</button>
+        <button class="ghost" id="btnClearRows" type="button">Clear rows</button>
+        <span class="badge" id="revBadge">rev: —</span>
+      </div>
+
+      <div id="palletMsg" class="msg"></div>
+
+      <div style="overflow:auto; margin-top:10px;">
+        <table>
+          <thead>
+            <tr>
+              <th style="min-width:110px;">Item No</th>
+              <th style="min-width:260px;">Description</th>
+              <th class="right" style="min-width:70px;">BPC</th>
+              <th class="right" style="min-width:70px;">Cases</th>
+              <th class="right" style="min-width:70px;">Each</th>
+              <th class="right" style="min-width:90px;">Units</th>
+              <th class="nowrap">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="itemsTbody">
+            <tr><td colspan="7" class="muted">Load a pallet to begin.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="actions" style="margin-top:12px;">
+        <button class="primary" id="btnSavePallet" type="button">Save pallet</button>
+        <div class="muted" id="unitsSummary"></div>
+      </div>
+    </div>
+
+    <!-- History -->
+    <div class="card">
+      <h2>Pallet History</h2>
+      <div class="muted">
+        View revision history via <code>GET /employee/pallets/:pallet/history</code> and load a specific revision via
+        <code>GET /employee/pallets/:pallet/rev/:rev</code>.
+      </div>
+
+      <div class="row" style="margin-top:12px;">
+        <div>
+          <label>Pallet #</label>
+          <input id="h_pallet" inputmode="numeric" placeholder="e.g. 12" />
+        </div>
+        <div>
+          <label>Limit</label>
+          <input id="h_limit" inputmode="numeric" value="50" />
+        </div>
+      </div>
+
+      <div class="actions" style="margin-top:10px;">
+        <button class="primary" id="btnLoadHistory" type="button">Load history</button>
+        <button class="ghost" id="btnClearHistory" type="button">Clear</button>
+      </div>
+
+      <div id="histMsg" class="msg"></div>
+
+      <div style="overflow:auto; margin-top:10px;">
+        <table>
+          <thead>
+            <tr>
+              <th class="right">Rev</th>
+              <th>Saved At</th>
+              <th>Saved By</th>
+              <th class="right">Items</th>
+              <th class="nowrap">Action</th>
+            </tr>
+          </thead>
+          <tbody id="histTbody">
+            <tr><td colspan="5" class="muted">No history loaded.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Bulk clear -->
+    <div class="card">
+      <h2>Bulk Clear Pallets</h2>
+      <div class="muted">
+        Clears pallets by saving an empty item list via <code>POST /employee/pallets/clear</code>.
+        You can paste ranges like <span class="mono">1-10, 12, 15-18</span>.
+      </div>
+
+      <label>Pallets (comma + ranges)</label>
+      <textarea id="clearText" placeholder="e.g. 1-5, 7, 12-14"></textarea>
+
+      <label>Saved By (optional)</label>
+      <input id="clearSavedBy" placeholder="defaults to your username" />
+
+      <div class="actions" style="margin-top:10px;">
+        <button class="primary" id="btnBulkClear" type="button">Clear pallets</button>
+        <button class="ghost" id="btnClearBulkBox" type="button">Clear box</button>
+      </div>
+
+      <div id="clearMsg" class="msg"></div>
+
+      <div style="overflow:auto; margin-top:10px;">
+        <table>
+          <thead>
+            <tr>
+              <th class="right">Pallet</th>
+              <th>Result</th>
+              <th class="right">Rev</th>
+              <th>Saved At</th>
+              <th>Saved By</th>
+              <th>Detail</th>
+            </tr>
+          </thead>
+          <tbody id="clearTbody">
+            <tr><td colspan="6" class="muted">No clears run yet.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </main>
+
+<script>
+  // ====== CONFIG ======
+  const API_BASE = "https://queensims.anthonycr2001.workers.dev"; // <-- set to your Worker
+
+  // ====== helpers ======
+  const $ = (id) => document.getElementById(id);
+  const setMsg = (el, text, ok=false) => { el.textContent = text || ""; el.className = "msg " + (ok ? "ok" : "err"); };
+  const esc = (s) => String(s ?? "");
+  const boolStr = (v) => String(v||"").toLowerCase() === "true" ? "true" : "false";
+
+  async function api(path, { method="GET", body=null } = {}) {
+    const res = await fetch(API_BASE + path, {
+      method,
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: body ? JSON.stringify(body) : null
+    });
+    const data = await res.json().catch(() => ({}));
+    return { status: res.status, data };
+  }
+
+  function setBusy(btn, busy, busyText="Working…") {
+    if (!btn) return;
+    btn.disabled = !!busy;
+    const orig = btn.getAttribute("data-orig") || btn.textContent;
+    if (!btn.getAttribute("data-orig")) btn.setAttribute("data-orig", orig);
+    btn.textContent = busy ? busyText : orig;
+  }
+
+  // ====== session guard ======
+  let ME = null;
+  let PALLET_COUNT = null;
+
+  async function guardEmployee() {
+    const { data } = await api("/me");
+    if (!data?.ok) { location.href = "./index.html"; return null; }
+
+    const me = data.me || {};
+    const role = String(me.role||"").toLowerCase();
+
+    if (boolStr(me.mustChangePassword) === "true") {
+      // login page has the change-password flow
+      location.href = "./index.html";
+      return null;
+    }
+
+    // manager can view employee page too, but keep it simple:
+    $("meLine").textContent = `Signed in as ${me.username} (${me.role})`;
+    return me;
+  }
+
+  async function loadConfig() {
+    const { data } = await api("/public/config");
+    if (data?.ok && Number.isFinite(Number(data.palletCount))) {
+      PALLET_COUNT = Number(data.palletCount);
+      $("palletMaxNote").textContent = PALLET_COUNT ? `(max ${PALLET_COUNT})` : "";
+    } else {
+      PALLET_COUNT = null;
+      $("palletMaxNote").textContent = "";
+    }
+  }
+
+  // ====== pallet items table ======
+  let CURRENT_PALLET = null;
+  let CURRENT_REV = null;
+
+  function computeUnits(bpc, cases, each) {
+    const B = Number(bpc); const C = Number(cases); const E = Number(each);
+    const bb = Number.isFinite(B) ? Math.trunc(B) : 0;
+    const cc = Number.isFinite(C) ? Math.trunc(C) : 0;
+    const ee = Number.isFinite(E) ? Math.trunc(E) : 0;
+    if (bb < 1 || cc < 0 || ee < 0) return 0;
+    return bb * cc + ee;
+  }
+
+  function renderItems(items) {
+    const tbody = $("itemsTbody");
+    const list = Array.isArray(items) ? items : [];
+
+    if (!CURRENT_PALLET) {
+      tbody.innerHTML = `<tr><td colspan="7" class="muted">Load a pallet to begin.</td></tr>`;
+      $("unitsSummary").textContent = "";
+      return;
+    }
+
+    if (!list.length) {
+      tbody.innerHTML = `<tr><td colspan="7" class="muted">No items yet. Add a row.</td></tr>`;
+      $("unitsSummary").textContent = "Total units: 0";
+      return;
+    }
+
+    tbody.innerHTML = list.map((it, idx) => {
+      const itemNo = esc(it.itemNo || "");
+      const description = esc(it.description || "");
+      const bpc = Number.isFinite(Number(it.bpc)) ? Math.trunc(Number(it.bpc)) : 1;
+      const cases = Number.isFinite(Number(it.cases)) ? Math.trunc(Number(it.cases)) : 0;
+      const each = Number.isFinite(Number(it.each)) ? Math.trunc(Number(it.each)) : 0;
+      const units = computeUnits(bpc, cases, each);
+
+      return `
+        <tr data-idx="${idx}">
+          <td><input class="i_itemNo" value="${itemNo}" placeholder="Item No" /></td>
+          <td><input class="i_desc" value="${description}" placeholder="Description" /></td>
+          <td><input class="i_bpc right" inputmode="numeric" value="${bpc}" /></td>
+          <td><input class="i_cases right" inputmode="numeric" value="${cases}" /></td>
+          <td><input class="i_each right" inputmode="numeric" value="${each}" /></td>
+          <td class="right"><span class="i_units">${units}</span></td>
+          <td class="nowrap">
+            <button class="ghost small" data-act="delRow">Delete</button>
+          </td>
+        </tr>
+      `;
+    }).join("");
+
+    updateUnitsSummary();
+  }
+
+  function getItemsFromUI() {
+    const rows = Array.from($("itemsTbody").querySelectorAll("tr[data-idx]"));
+    const out = [];
+
+    for (const r of rows) {
+      const itemNo = r.querySelector(".i_itemNo")?.value?.trim() || "";
+      if (!itemNo) continue;
+
+      const description = r.querySelector(".i_desc")?.value || "";
+      const bpc = Math.trunc(Number(r.querySelector(".i_bpc")?.value || "0"));
+      const cases = Math.trunc(Number(r.querySelector(".i_cases")?.value || "0"));
+      const each = Math.trunc(Number(r.querySelector(".i_each")?.value || "0"));
+
+      out.push({ itemNo, description, bpc, cases, each });
+    }
+    return out;
+  }
+
+  function updateUnitsSummary() {
+    const rows = Array.from($("itemsTbody").querySelectorAll("tr[data-idx]"));
+    let total = 0;
+
+    for (const r of rows) {
+      const bpc = Math.trunc(Number(r.querySelector(".i_bpc")?.value || "0"));
+      const cases = Math.trunc(Number(r.querySelector(".i_cases")?.value || "0"));
+      const each = Math.trunc(Number(r.querySelector(".i_each")?.value || "0"));
+      const u = computeUnits(bpc, cases, each);
+      const span = r.querySelector(".i_units");
+      if (span) span.textContent = String(u);
+      total += u;
+    }
+    $("unitsSummary").textContent = `Total units: ${total}`;
+  }
+
+  function addBlankRow() {
+    const items = getItemsFromUI();
+    items.push({ itemNo:"", description:"", bpc: 1, cases: 0, each: 0 });
+    renderItems(items);
+  }
+
+  // ====== pallet load/save ======
+  async function loadPallet() {
+    const btn = $("btnLoadPallet");
+    setBusy(btn, true, "Loading…");
+    setMsg($("palletMsg"), "", true);
+
+    try {
+      const pallet = Math.trunc(Number($("palletNo").value || "0"));
+      if (!Number.isInteger(pallet) || pallet < 1) {
+        setMsg($("palletMsg"), "Enter a valid pallet number (>= 1).", false);
+        return;
+      }
+      if (PALLET_COUNT && pallet > PALLET_COUNT) {
+        setMsg($("palletMsg"), `Pallet out of range (max ${PALLET_COUNT}).`, false);
+        return;
+      }
+
+      const { data } = await api(`/public/pallets/${pallet}`);
+      if (!data?.ok) {
+        setMsg($("palletMsg"), data?.error || "LOAD_FAILED", false);
+        return;
+      }
+
+      CURRENT_PALLET = pallet;
+      CURRENT_REV = Number.isFinite(Number(data.rev)) ? Math.trunc(Number(data.rev)) : 0;
+      $("revBadge").textContent = `rev: ${CURRENT_REV}`;
+
+      // Your public pallet may return items or just header. If items not present, start empty.
+      const items = Array.isArray(data.items) ? data.items : [];
+      renderItems(items);
+
+      setMsg($("palletMsg"), `Loaded pallet ${pallet} (rev ${CURRENT_REV}).`, true);
+    } finally {
+      setBusy(btn, false);
+    }
+  }
+
+  async function savePallet() {
+    const btn = $("btnSavePallet");
+    setBusy(btn, true, "Saving…");
+    setMsg($("palletMsg"), "", true);
+
+    try {
+      if (!CURRENT_PALLET) {
+        setMsg($("palletMsg"), "Load a pallet first.", false);
+        return;
+      }
+      if (!Number.isInteger(CURRENT_REV) || CURRENT_REV < 0) {
+        setMsg($("palletMsg"), "Missing base revision. Reload the pallet.", false);
+        return;
+      }
+
+      const items = getItemsFromUI();
+      const savedBy = ($("savedBy").value.trim() || (ME?.username || "")).trim();
+
+      const { data } = await api(`/employee/pallets/${CURRENT_PALLET}/save`, {
+        method: "POST",
+        body: {
+          baseRev: CURRENT_REV,
+          savedBy,
+          items
+        }
+      });
+
+      if (!data?.ok) {
+        // If conflict, tell user to reload
+        if (data?.error === "REV_CONFLICT") {
+          setMsg($("palletMsg"), "REV_CONFLICT: Someone saved before you. Reload pallet and try again.", false);
+          return;
+        }
+        setMsg($("palletMsg"), data?.error || "SAVE_FAILED", false);
+        return;
+      }
+
+      // If upstream returns new rev, update
+      if (Number.isFinite(Number(data.rev))) {
+        CURRENT_REV = Math.trunc(Number(data.rev));
+        $("revBadge").textContent = `rev: ${CURRENT_REV}`;
+      }
+
+      setMsg($("palletMsg"), "Saved successfully.", true);
+    } finally {
+      setBusy(btn, false);
+    }
+  }
+
+  // ====== history ======
+  async function loadHistory() {
+    const btn = $("btnLoadHistory");
+    setBusy(btn, true, "Loading…");
+    setMsg($("histMsg"), "", true);
+
+    try {
+      const pallet = Math.trunc(Number($("h_pallet").value || "0"));
+      if (!Number.isInteger(pallet) || pallet < 1) {
+        setMsg($("histMsg"), "Enter a valid pallet number (>= 1).", false);
+        return;
+      }
+
+      let limit = Math.trunc(Number($("h_limit").value || "50"));
+      if (!Number.isInteger(limit) || limit <= 0) limit = 50;
+      limit = Math.min(limit, 200);
+
+      const { data } = await api(`/employee/pallets/${pallet}/history?limit=${encodeURIComponent(limit)}`);
+      if (!data?.ok) {
+        setMsg($("histMsg"), data?.error || "HISTORY_FAILED", false);
+        return;
+      }
+
+      const list = Array.isArray(data.history) ? data.history : (Array.isArray(data.items) ? data.items : []);
+      const tbody = $("histTbody");
+
+      if (!list.length) {
+        tbody.innerHTML = `<tr><td colspan="5" class="muted">No history found.</td></tr>`;
+        setMsg($("histMsg"), "Loaded 0 history rows.", true);
+        return;
+      }
+
+      tbody.innerHTML = list.map(h => {
+        const rev = Number.isFinite(Number(h.rev)) ? Math.trunc(Number(h.rev)) : "";
+        const savedAt = esc(h.savedAt || h.whenIso || "");
+        const savedBy = esc(h.savedBy || "");
+        const itemCount = Number.isFinite(Number(h.itemCount)) ? Math.trunc(Number(h.itemCount)) : (Array.isArray(h.items) ? h.items.length : "");
+        return `
+          <tr>
+            <td class="right mono">${rev}</td>
+            <td class="muted">${savedAt}</td>
+            <td>${savedBy}</td>
+            <td class="right">${itemCount}</td>
+            <td class="nowrap">
+              <button class="ghost small" data-act="openRev" data-pallet="${pallet}" data-rev="${rev}">Load rev</button>
+            </td>
+          </tr>
+        `;
+      }).join("");
+
+      setMsg($("histMsg"), `Loaded ${list.length} history rows.`, true);
+    } finally {
+      setBusy(btn, false);
+    }
+  }
+
+  async function loadRevision(pallet, rev) {
+    setMsg($("histMsg"), `Loading rev ${rev}…`, true);
+
+    const { data } = await api(`/employee/pallets/${pallet}/rev/${rev}`);
+    if (!data?.ok) {
+      setMsg($("histMsg"), data?.error || "LOAD_REV_FAILED", false);
+      return;
+    }
+
+    // Load into editor
+    CURRENT_PALLET = pallet;
+    CURRENT_REV = Number.isFinite(Number(data.rev)) ? Math.trunc(Number(data.rev)) : Math.trunc(Number(rev));
+    $("palletNo").value = pallet;
+    $("revBadge").textContent = `rev: ${CURRENT_REV}`;
+
+    const items = Array.isArray(data.items) ? data.items : [];
+    renderItems(items);
+
+    setMsg($("palletMsg"), `Loaded pallet ${pallet} at rev ${CURRENT_REV} into editor.`, true);
+  }
+
+  // ====== bulk clear ======
+  async function bulkClear() {
+    const btn = $("btnBulkClear");
+    setBusy(btn, true, "Clearing…");
+    setMsg($("clearMsg"), "", true);
+
+    try {
+      const palletsText = $("clearText").value.trim();
+      if (!palletsText) {
+        setMsg($("clearMsg"), "Enter pallets to clear (comma + ranges).", false);
+        return;
+      }
+
+      const savedBy = ($("clearSavedBy").value.trim() || (ME?.username || "")).trim();
+
+      const { data } = await api("/employee/pallets/clear", {
+        method: "POST",
+        body: { palletsText, savedBy }
+      });
+
+      if (!data?.ok) {
+        setMsg($("clearMsg"), data?.error || "CLEAR_FAILED", false);
+        return;
+      }
+
+      const results = Array.isArray(data.results) ? data.results : [];
+      const tbody = $("clearTbody");
+
+      if (!results.length) {
+        tbody.innerHTML = `<tr><td colspan="6" class="muted">No results returned.</td></tr>`;
+        setMsg($("clearMsg"), "Clear completed (no results).", true);
+        return;
+      }
+
+      tbody.innerHTML = results.map(r => {
+        const ok = !!r.ok;
+        return `
+          <tr>
+            <td class="right mono">${esc(r.pallet)}</td>
+            <td class="${ok ? "ok" : "err"}">${ok ? "OK" : "FAILED"}</td>
+            <td class="right mono">${ok ? esc(r.rev ?? "") : ""}</td>
+            <td class="muted">${ok ? esc(r.savedAt ?? "") : ""}</td>
+            <td>${ok ? esc(r.savedBy ?? "") : ""}</td>
+            <td class="muted">${ok ? "" : esc(r.error || r.detail || "")}</td>
+          </tr>
+        `;
+      }).join("");
+
+      const okCount = results.filter(x => x.ok).length;
+      setMsg($("clearMsg"), `Done. OK: ${okCount}/${results.length}`, true);
+    } finally {
+      setBusy(btn, false);
+    }
+  }
+
+  // ====== reset self password ======
+  async function resetSelfPassword() {
+    const btn = $("btnResetSelf");
+    setBusy(btn, true, "Resetting…");
+    setMsg($("pwMsg"), "", true);
+
+    try {
+      const newTempPassword = $("pw_newTemp").value.trim();
+      if (!newTempPassword) {
+        setMsg($("pwMsg"), "New temporary password required.", false);
+        return;
+      }
+
+      const { data } = await api("/users/reset-password", { method:"POST", body:{ newTempPassword } });
+      if (!data?.ok) {
+        setMsg($("pwMsg"), data?.error || "RESET_FAILED", false);
+        return;
+      }
+
+      setMsg($("pwMsg"), "Password reset OK. Redirecting you to login to change it…", true);
+
+      // Your worker flips mustChangePassword in KV when user resets themselves,
+      // so kick them back to index to do /auth/change-password
+      setTimeout(() => location.href = "./index.html", 700);
+    } finally {
+      setBusy(btn, false);
+    }
+  }
+
+  // ====== events ======
+  $("btnLogout").addEventListener("click", async () => {
+    await api("/auth/logout", { method:"POST" });
+    location.href = "./index.html";
+  });
+
+  $("btnRefreshConfig").addEventListener("click", async () => {
+    await loadConfig();
+    setMsg($("palletMsg"), "Refreshed config.", true);
+  });
+
+  $("btnResetSelf").addEventListener("click", resetSelfPassword);
+  $("btnClearPw").addEventListener("click", () => { $("pw_newTemp").value = ""; setMsg($("pwMsg"), "", true); });
+
+  $("btnLoadPallet").addEventListener("click", loadPallet);
+  $("btnSavePallet").addEventListener("click", savePallet);
+  $("btnAddRow").addEventListener("click", () => {
+    if (!CURRENT_PALLET) return setMsg($("palletMsg"), "Load a pallet first.", false);
+    addBlankRow();
+  });
+  $("btnClearRows").addEventListener("click", () => {
+    if (!CURRENT_PALLET) return setMsg($("palletMsg"), "Load a pallet first.", false);
+    renderItems([]);
+  });
+
+  $("itemsTbody").addEventListener("input", (e) => {
+    if (e.target.matches(".i_bpc,.i_cases,.i_each")) updateUnitsSummary();
+  });
+
+  $("itemsTbody").addEventListener("click", (e) => {
+    const btn = e.target.closest("button");
+    if (!btn) return;
+    const act = btn.getAttribute("data-act");
+    if (act === "delRow") {
+      const tr = btn.closest("tr[data-idx]");
+      if (!tr) return;
+      tr.remove();
+      updateUnitsSummary();
+      // re-index by re-rendering from UI
+      renderItems(getItemsFromUI());
+    }
+  });
+
+  $("btnLoadHistory").addEventListener("click", loadHistory);
+  $("btnClearHistory").addEventListener("click", () => {
+    $("histTbody").innerHTML = `<tr><td colspan="5" class="muted">No history loaded.</td></tr>`;
+    setMsg($("histMsg"), "", true);
+  });
+
+  $("histTbody").addEventListener("click", async (e) => {
+    const btn = e.target.closest("button");
+    if (!btn) return;
+    if (btn.getAttribute("data-act") !== "openRev") return;
+    const pallet = Math.trunc(Number(btn.getAttribute("data-pallet")));
+    const rev = Math.trunc(Number(btn.getAttribute("data-rev")));
+    if (!Number.isInteger(pallet) || pallet < 1) return;
+    if (!Number.isInteger(rev) || rev < 0) return;
+    await loadRevision(pallet, rev);
+  });
+
+  $("btnBulkClear").addEventListener("click", bulkClear);
+  $("btnClearBulkBox").addEventListener("click", () => {
+    $("clearText").value = "";
+    $("clearSavedBy").value = "";
+    setMsg($("clearMsg"), "", true);
+  });
+
+  // ====== boot ======
+  (async () => {
+    ME = await guardEmployee();
+    if (!ME) return;
+    await loadConfig();
+
+    // nice default
+    $("savedBy").value = ME.username || "";
+    $("clearSavedBy").value = ME.username || "";
+  })();
+</script>
+</body>
+</html>
