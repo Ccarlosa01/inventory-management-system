@@ -42,6 +42,34 @@
     .right { text-align:right; }
     .tiny { font-size:12px; opacity:.9; }
     .badge { display:inline-block; padding:4px 8px; border-radius:999px; background:#eef2ff; border:1px solid #dbe4ff; font-size:12px; color:#1f3fbf; }
+
+    /* Catalog dropdown */
+    .suggestWrap { position: relative; }
+    .suggestBox {
+      position:absolute;
+      left:0; right:0;
+      top: calc(100% + 6px);
+      background:#fff;
+      border:1px solid #d6d8e0;
+      border-radius:12px;
+      box-shadow: 0 10px 24px rgba(0,0,0,.12);
+      z-index: 50;
+      max-height: 260px;
+      overflow:auto;
+      display:none;
+    }
+    .suggestItem {
+      padding:10px 12px;
+      cursor:pointer;
+      display:flex;
+      flex-direction:column;
+      gap:4px;
+    }
+    .suggestItem:hover { background:#f3f6ff; }
+    .suggestTop { display:flex; align-items:baseline; justify-content:space-between; gap:10px; }
+    .suggestDesc { font-weight:600; }
+    .suggestMeta { font-size:12px; color:#666; }
+    .suggestCode { font-size:12px; color:#1f3fbf; }
   </style>
 </head>
 <body>
@@ -59,31 +87,13 @@
   </header>
 
   <main>
-    <!-- Password reset (self) -->
-    <div class="card">
-      <h2>Reset My Password</h2>
-      <div class="muted">
-        This sets a <b>temporary password</b> for your own account via <code>POST /users/reset-password</code>.
-        After doing this, you’ll be required to change your password on the login screen.
-      </div>
-
-      <label>New temporary password</label>
-      <input id="pw_newTemp" type="password" placeholder="Temp123!" />
-
-      <div class="row" style="margin-top:10px;">
-        <button class="primary" id="btnResetSelf" type="button">Reset my password</button>
-        <button class="ghost" id="btnClearPw" type="button">Clear</button>
-      </div>
-
-      <div id="pwMsg" class="msg"></div>
-    </div>
-
     <!-- Pallet editor -->
     <div class="card">
       <h2>Pallet Editor</h2>
       <div class="muted">
-        Load a pallet header via <code>GET /public/pallets/:pallet</code>, edit items, and save via
+        Load pallet header via <code>GET /public/pallets/:pallet</code>, edit items, and save via
         <code>POST /employee/pallets/:pallet/save</code>.
+        <br><span class="tiny">Description field supports catalog search suggestions.</span>
       </div>
 
       <div class="row" style="margin-top:12px;">
@@ -111,7 +121,7 @@
           <thead>
             <tr>
               <th style="min-width:110px;">Item No</th>
-              <th style="min-width:260px;">Description</th>
+              <th style="min-width:360px;">Description</th>
               <th class="right" style="min-width:70px;">BPC</th>
               <th class="right" style="min-width:70px;">Cases</th>
               <th class="right" style="min-width:70px;">Each</th>
@@ -131,55 +141,11 @@
       </div>
     </div>
 
-    <!-- History -->
-    <div class="card">
-      <h2>Pallet History</h2>
-      <div class="muted">
-        View revision history via <code>GET /employee/pallets/:pallet/history</code> and load a specific revision via
-        <code>GET /employee/pallets/:pallet/rev/:rev</code>.
-      </div>
-
-      <div class="row" style="margin-top:12px;">
-        <div>
-          <label>Pallet #</label>
-          <input id="h_pallet" inputmode="numeric" placeholder="e.g. 12" />
-        </div>
-        <div>
-          <label>Limit</label>
-          <input id="h_limit" inputmode="numeric" value="50" />
-        </div>
-      </div>
-
-      <div class="actions" style="margin-top:10px;">
-        <button class="primary" id="btnLoadHistory" type="button">Load history</button>
-        <button class="ghost" id="btnClearHistory" type="button">Clear</button>
-      </div>
-
-      <div id="histMsg" class="msg"></div>
-
-      <div style="overflow:auto; margin-top:10px;">
-        <table>
-          <thead>
-            <tr>
-              <th class="right">Rev</th>
-              <th>Saved At</th>
-              <th>Saved By</th>
-              <th class="right">Items</th>
-              <th class="nowrap">Action</th>
-            </tr>
-          </thead>
-          <tbody id="histTbody">
-            <tr><td colspan="5" class="muted">No history loaded.</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
-
     <!-- Bulk clear -->
     <div class="card">
       <h2>Bulk Clear Pallets</h2>
       <div class="muted">
-        Clears pallets by saving an empty item list via <code>POST /employee/pallets/clear</code>.
+        Clears pallets via <code>POST /employee/pallets/clear</code>.
         You can paste ranges like <span class="mono">1-10, 12, 15-18</span>.
       </div>
 
@@ -218,7 +184,12 @@
 
 <script>
   // ====== CONFIG ======
-  const API_BASE = "https://queensims.anthonycr2001.workers.dev"; // <-- set to your Worker
+  const API_BASE = "https://queensims.anthonycr2001.workers.dev"; // <-- your Worker
+
+  // NEW endpoints you will add next:
+  // GET  /catalog/search?q=...&limit=10        -> { ok:true, results:[{ itemNo, description }] }
+  // GET  /bpc-overrides/get?itemNo=...         -> { ok:true, found:true|false, bpc?:number }
+  // POST /bpc-overrides/upsert                 -> { ok:true } body { itemNo, bpc }
 
   // ====== helpers ======
   const $ = (id) => document.getElementById(id);
@@ -245,6 +216,21 @@
     btn.textContent = busy ? busyText : orig;
   }
 
+  function isLastRow(tr) {
+    const rows = Array.from($("itemsTbody").querySelectorAll("tr[data-idx]"));
+    if (!rows.length) return false;
+    return rows[rows.length - 1] === tr;
+  }
+
+  function isRowBlank(tr) {
+    const itemNo = tr.querySelector(".i_itemNo")?.value?.trim() || "";
+    const desc = tr.querySelector(".i_desc")?.value?.trim() || "";
+    const cases = tr.querySelector(".i_cases")?.value?.trim() || "";
+    const each = tr.querySelector(".i_each")?.value?.trim() || "";
+    // bpc defaults to 1, so don't count it
+    return !itemNo && !desc && !cases && !each;
+  }
+
   // ====== session guard ======
   let ME = null;
   let PALLET_COUNT = null;
@@ -254,15 +240,11 @@
     if (!data?.ok) { location.href = "./index.html"; return null; }
 
     const me = data.me || {};
-    const role = String(me.role||"").toLowerCase();
-
     if (boolStr(me.mustChangePassword) === "true") {
-      // login page has the change-password flow
       location.href = "./index.html";
       return null;
     }
 
-    // manager can view employee page too, but keep it simple:
     $("meLine").textContent = `Signed in as ${me.username} (${me.role})`;
     return me;
   }
@@ -291,66 +273,6 @@
     return bb * cc + ee;
   }
 
-  function renderItems(items) {
-    const tbody = $("itemsTbody");
-    const list = Array.isArray(items) ? items : [];
-
-    if (!CURRENT_PALLET) {
-      tbody.innerHTML = `<tr><td colspan="7" class="muted">Load a pallet to begin.</td></tr>`;
-      $("unitsSummary").textContent = "";
-      return;
-    }
-
-    if (!list.length) {
-      tbody.innerHTML = `<tr><td colspan="7" class="muted">No items yet. Add a row.</td></tr>`;
-      $("unitsSummary").textContent = "Total units: 0";
-      return;
-    }
-
-    tbody.innerHTML = list.map((it, idx) => {
-      const itemNo = esc(it.itemNo || "");
-      const description = esc(it.description || "");
-      const bpc = Number.isFinite(Number(it.bpc)) ? Math.trunc(Number(it.bpc)) : 1;
-      const cases = Number.isFinite(Number(it.cases)) ? Math.trunc(Number(it.cases)) : 0;
-      const each = Number.isFinite(Number(it.each)) ? Math.trunc(Number(it.each)) : 0;
-      const units = computeUnits(bpc, cases, each);
-
-      return `
-        <tr data-idx="${idx}">
-          <td><input class="i_itemNo" value="${itemNo}" placeholder="Item No" /></td>
-          <td><input class="i_desc" value="${description}" placeholder="Description" /></td>
-          <td><input class="i_bpc right" inputmode="numeric" value="${bpc}" /></td>
-          <td><input class="i_cases right" inputmode="numeric" value="${cases}" /></td>
-          <td><input class="i_each right" inputmode="numeric" value="${each}" /></td>
-          <td class="right"><span class="i_units">${units}</span></td>
-          <td class="nowrap">
-            <button class="ghost small" data-act="delRow">Delete</button>
-          </td>
-        </tr>
-      `;
-    }).join("");
-
-    updateUnitsSummary();
-  }
-
-  function getItemsFromUI() {
-    const rows = Array.from($("itemsTbody").querySelectorAll("tr[data-idx]"));
-    const out = [];
-
-    for (const r of rows) {
-      const itemNo = r.querySelector(".i_itemNo")?.value?.trim() || "";
-      if (!itemNo) continue;
-
-      const description = r.querySelector(".i_desc")?.value || "";
-      const bpc = Math.trunc(Number(r.querySelector(".i_bpc")?.value || "0"));
-      const cases = Math.trunc(Number(r.querySelector(".i_cases")?.value || "0"));
-      const each = Math.trunc(Number(r.querySelector(".i_each")?.value || "0"));
-
-      out.push({ itemNo, description, bpc, cases, each });
-    }
-    return out;
-  }
-
   function updateUnitsSummary() {
     const rows = Array.from($("itemsTbody").querySelectorAll("tr[data-idx]"));
     let total = 0;
@@ -367,10 +289,82 @@
     $("unitsSummary").textContent = `Total units: ${total}`;
   }
 
+  function getItemsFromUI() {
+    const rows = Array.from($("itemsTbody").querySelectorAll("tr[data-idx]"));
+    const out = [];
+    for (const r of rows) {
+      const itemNo = r.querySelector(".i_itemNo")?.value?.trim() || "";
+      if (!itemNo) continue;
+
+      const description = r.querySelector(".i_desc")?.value || "";
+      const bpc = Math.trunc(Number(r.querySelector(".i_bpc")?.value || "0"));
+      const cases = Math.trunc(Number(r.querySelector(".i_cases")?.value || "0"));
+      const each = Math.trunc(Number(r.querySelector(".i_each")?.value || "0"));
+
+      out.push({ itemNo, description, bpc, cases, each });
+    }
+    return out;
+  }
+
+  function renderItems(items) {
+    const tbody = $("itemsTbody");
+    const list = Array.isArray(items) ? items : [];
+
+    if (!CURRENT_PALLET) {
+      tbody.innerHTML = `<tr><td colspan="7" class="muted">Load a pallet to begin.</td></tr>`;
+      $("unitsSummary").textContent = "";
+      return;
+    }
+
+    const safe = list.length ? list : [];
+    tbody.innerHTML = safe.map((it, idx) => {
+      const itemNo = esc(it.itemNo || "");
+      const description = esc(it.description || "");
+      const bpc = Number.isFinite(Number(it.bpc)) ? Math.trunc(Number(it.bpc)) : 1;
+      const cases = Number.isFinite(Number(it.cases)) ? Math.trunc(Number(it.cases)) : 0;
+      const each = Number.isFinite(Number(it.each)) ? Math.trunc(Number(it.each)) : 0;
+      const units = computeUnits(bpc, cases, each);
+
+      return `
+        <tr data-idx="${idx}">
+          <td><input class="i_itemNo" value="${itemNo}" placeholder="Item No" /></td>
+
+          <td>
+            <div class="suggestWrap">
+              <input class="i_desc" value="${description}" placeholder="Search description…" autocomplete="off" />
+              <div class="suggestBox" aria-hidden="true"></div>
+            </div>
+          </td>
+
+          <td><input class="i_bpc right" inputmode="numeric" value="${bpc}" /></td>
+          <td><input class="i_cases right" inputmode="numeric" value="${cases}" /></td>
+          <td><input class="i_each right" inputmode="numeric" value="${each}" /></td>
+          <td class="right"><span class="i_units">${units}</span></td>
+          <td class="nowrap">
+            <button class="ghost small" data-act="delRow">Delete</button>
+          </td>
+        </tr>
+      `;
+    }).join("");
+
+    // Ensure there is always at least one row to work with
+    if (!safe.length) {
+      tbody.innerHTML = `<tr><td colspan="7" class="muted">No items yet. Add a row.</td></tr>`;
+      $("unitsSummary").textContent = "Total units: 0";
+      return;
+    }
+
+    updateUnitsSummary();
+  }
+
   function addBlankRow() {
     const items = getItemsFromUI();
     items.push({ itemNo:"", description:"", bpc: 1, cases: 0, each: 0 });
     renderItems(items);
+    // focus new description for speed
+    const rows = Array.from($("itemsTbody").querySelectorAll("tr[data-idx]"));
+    const last = rows[rows.length - 1];
+    last?.querySelector(".i_desc")?.focus();
   }
 
   // ====== pallet load/save ======
@@ -400,9 +394,10 @@
       CURRENT_REV = Number.isFinite(Number(data.rev)) ? Math.trunc(Number(data.rev)) : 0;
       $("revBadge").textContent = `rev: ${CURRENT_REV}`;
 
-      // Your public pallet may return items or just header. If items not present, start empty.
       const items = Array.isArray(data.items) ? data.items : [];
-      renderItems(items);
+      // start with at least one row
+      const initial = items.length ? items : [{ itemNo:"", description:"", bpc: 1, cases: 0, each: 0 }];
+      renderItems(initial);
 
       setMsg($("palletMsg"), `Loaded pallet ${pallet} (rev ${CURRENT_REV}).`, true);
     } finally {
@@ -430,15 +425,10 @@
 
       const { data } = await api(`/employee/pallets/${CURRENT_PALLET}/save`, {
         method: "POST",
-        body: {
-          baseRev: CURRENT_REV,
-          savedBy,
-          items
-        }
+        body: { baseRev: CURRENT_REV, savedBy, items }
       });
 
       if (!data?.ok) {
-        // If conflict, tell user to reload
         if (data?.error === "REV_CONFLICT") {
           setMsg($("palletMsg"), "REV_CONFLICT: Someone saved before you. Reload pallet and try again.", false);
           return;
@@ -447,7 +437,6 @@
         return;
       }
 
-      // If upstream returns new rev, update
       if (Number.isFinite(Number(data.rev))) {
         CURRENT_REV = Math.trunc(Number(data.rev));
         $("revBadge").textContent = `rev: ${CURRENT_REV}`;
@@ -459,81 +448,143 @@
     }
   }
 
-  // ====== history ======
-  async function loadHistory() {
-    const btn = $("btnLoadHistory");
-    setBusy(btn, true, "Loading…");
-    setMsg($("histMsg"), "", true);
+  // ====== Catalog + BPC override logic ======
+  // Debounced search per-row
+  const searchStateByRow = new WeakMap(); // tr -> { timer, lastQ, open }
 
-    try {
-      const pallet = Math.trunc(Number($("h_pallet").value || "0"));
-      if (!Number.isInteger(pallet) || pallet < 1) {
-        setMsg($("histMsg"), "Enter a valid pallet number (>= 1).", false);
-        return;
-      }
-
-      let limit = Math.trunc(Number($("h_limit").value || "50"));
-      if (!Number.isInteger(limit) || limit <= 0) limit = 50;
-      limit = Math.min(limit, 200);
-
-      const { data } = await api(`/employee/pallets/${pallet}/history?limit=${encodeURIComponent(limit)}`);
-      if (!data?.ok) {
-        setMsg($("histMsg"), data?.error || "HISTORY_FAILED", false);
-        return;
-      }
-
-      const list = Array.isArray(data.history) ? data.history : (Array.isArray(data.items) ? data.items : []);
-      const tbody = $("histTbody");
-
-      if (!list.length) {
-        tbody.innerHTML = `<tr><td colspan="5" class="muted">No history found.</td></tr>`;
-        setMsg($("histMsg"), "Loaded 0 history rows.", true);
-        return;
-      }
-
-      tbody.innerHTML = list.map(h => {
-        const rev = Number.isFinite(Number(h.rev)) ? Math.trunc(Number(h.rev)) : "";
-        const savedAt = esc(h.savedAt || h.whenIso || "");
-        const savedBy = esc(h.savedBy || "");
-        const itemCount = Number.isFinite(Number(h.itemCount)) ? Math.trunc(Number(h.itemCount)) : (Array.isArray(h.items) ? h.items.length : "");
-        return `
-          <tr>
-            <td class="right mono">${rev}</td>
-            <td class="muted">${savedAt}</td>
-            <td>${savedBy}</td>
-            <td class="right">${itemCount}</td>
-            <td class="nowrap">
-              <button class="ghost small" data-act="openRev" data-pallet="${pallet}" data-rev="${rev}">Load rev</button>
-            </td>
-          </tr>
-        `;
-      }).join("");
-
-      setMsg($("histMsg"), `Loaded ${list.length} history rows.`, true);
-    } finally {
-      setBusy(btn, false);
-    }
+  function getSuggestBox(tr) {
+    return tr.querySelector(".suggestBox");
   }
 
-  async function loadRevision(pallet, rev) {
-    setMsg($("histMsg"), `Loading rev ${rev}…`, true);
+  function openSuggest(tr) {
+    const box = getSuggestBox(tr);
+    if (!box) return;
+    box.style.display = "block";
+    box.setAttribute("aria-hidden", "false");
+  }
 
-    const { data } = await api(`/employee/pallets/${pallet}/rev/${rev}`);
-    if (!data?.ok) {
-      setMsg($("histMsg"), data?.error || "LOAD_REV_FAILED", false);
+  function closeSuggest(tr) {
+    const box = getSuggestBox(tr);
+    if (!box) return;
+    box.style.display = "none";
+    box.setAttribute("aria-hidden", "true");
+    box.innerHTML = "";
+  }
+
+  function renderSuggestions(tr, results) {
+    const box = getSuggestBox(tr);
+    if (!box) return;
+
+    const list = Array.isArray(results) ? results : [];
+    if (!list.length) {
+      box.innerHTML = `<div class="suggestItem"><div class="suggestMeta">No matches.</div></div>`;
+      openSuggest(tr);
       return;
     }
 
-    // Load into editor
-    CURRENT_PALLET = pallet;
-    CURRENT_REV = Number.isFinite(Number(data.rev)) ? Math.trunc(Number(data.rev)) : Math.trunc(Number(rev));
-    $("palletNo").value = pallet;
-    $("revBadge").textContent = `rev: ${CURRENT_REV}`;
+    box.innerHTML = list.map((r, i) => {
+      const itemNo = esc(r.itemNo || "");
+      const description = esc(r.description || "");
+      return `
+        <div class="suggestItem" data-act="pickSuggest" data-itemno="${itemNo}" data-desc="${description}">
+          <div class="suggestTop">
+            <div class="suggestDesc">${description}</div>
+            <div class="suggestCode mono">${itemNo}</div>
+          </div>
+          <div class="suggestMeta">Select to fill Item No + BPC</div>
+        </div>
+      `;
+    }).join("");
 
-    const items = Array.isArray(data.items) ? data.items : [];
-    renderItems(items);
+    openSuggest(tr);
+  }
 
-    setMsg($("palletMsg"), `Loaded pallet ${pallet} at rev ${CURRENT_REV} into editor.`, true);
+  async function searchCatalog(q) {
+    const qq = String(q || "").trim();
+    if (qq.length < 2) return [];
+    const { data } = await api(`/catalog/search?q=${encodeURIComponent(qq)}&limit=10`);
+    if (!data?.ok) return [];
+    return Array.isArray(data.results) ? data.results : [];
+  }
+
+  async function getBpcOverride(itemNo) {
+    const { data } = await api(`/bpc-overrides/get?itemNo=${encodeURIComponent(itemNo)}`);
+    // expected: { ok:true, found:true/false, bpc?:number }
+    if (!data?.ok) return { ok:false, found:false };
+    return { ok:true, found: !!data.found, bpc: data.bpc };
+  }
+
+  async function upsertBpcOverride(itemNo, bpc) {
+    const { data } = await api(`/bpc-overrides/upsert`, { method:"POST", body:{ itemNo, bpc } });
+    return !!data?.ok;
+  }
+
+  function normalizeBpcInput(v) {
+    const n = Math.trunc(Number(v));
+    if (!Number.isFinite(n) || n < 1) return null;
+    return n;
+  }
+
+  async function ensureBpcForItem(tr, itemNo) {
+    // Try overrides first
+    const o = await getBpcOverride(itemNo);
+    if (o.ok && o.found && Number.isFinite(Number(o.bpc))) {
+      tr.querySelector(".i_bpc").value = Math.trunc(Number(o.bpc));
+      updateUnitsSummary();
+      return true;
+    }
+
+    // Not found => prompt the employee
+    const entered = prompt(`BPC not found for Item No ${itemNo}.\n\nPlease enter BPC (bottles per case):`, "12");
+    if (!entered) return false;
+
+    const bpc = normalizeBpcInput(entered);
+    if (!bpc) {
+      alert("Invalid BPC. Must be a whole number >= 1.");
+      return false;
+    }
+
+    // Save to sheet
+    const ok = await upsertBpcOverride(itemNo, bpc);
+    if (!ok) {
+      alert("Could not save BPC override. Try again or contact manager.");
+      return false;
+    }
+
+    // Fill visually
+    tr.querySelector(".i_bpc").value = bpc;
+    updateUnitsSummary();
+    return true;
+  }
+
+  async function applyCatalogPick(tr, { itemNo, description }) {
+    const itemInput = tr.querySelector(".i_itemNo");
+    const descInput = tr.querySelector(".i_desc");
+
+    itemInput.value = itemNo;
+    descInput.value = description;
+
+    closeSuggest(tr);
+
+    // Only visually fill: itemNo + bpc
+    await ensureBpcForItem(tr, itemNo);
+
+    // Convenience: focus cases next
+    tr.querySelector(".i_cases")?.focus();
+
+    // Auto-add a blank row if this is last row and not blank
+    maybeAutoAddRowAfterFinishDesc(tr);
+  }
+
+  function maybeAutoAddRowAfterFinishDesc(tr) {
+    // Trigger rule:
+    // - employee "finishes typing description" => we call this on blur/Enter in description
+    // - If it's the last row AND it's not blank => add a new row
+    if (!isLastRow(tr)) return;
+    if (isRowBlank(tr)) return;
+
+    // If last row has something meaningful, add a blank row
+    addBlankRow();
   }
 
   // ====== bulk clear ======
@@ -550,11 +601,7 @@
       }
 
       const savedBy = ($("clearSavedBy").value.trim() || (ME?.username || "")).trim();
-
-      const { data } = await api("/employee/pallets/clear", {
-        method: "POST",
-        body: { palletsText, savedBy }
-      });
+      const { data } = await api("/employee/pallets/clear", { method:"POST", body:{ palletsText, savedBy } });
 
       if (!data?.ok) {
         setMsg($("clearMsg"), data?.error || "CLEAR_FAILED", false);
@@ -591,35 +638,6 @@
     }
   }
 
-  // ====== reset self password ======
-  async function resetSelfPassword() {
-    const btn = $("btnResetSelf");
-    setBusy(btn, true, "Resetting…");
-    setMsg($("pwMsg"), "", true);
-
-    try {
-      const newTempPassword = $("pw_newTemp").value.trim();
-      if (!newTempPassword) {
-        setMsg($("pwMsg"), "New temporary password required.", false);
-        return;
-      }
-
-      const { data } = await api("/users/reset-password", { method:"POST", body:{ newTempPassword } });
-      if (!data?.ok) {
-        setMsg($("pwMsg"), data?.error || "RESET_FAILED", false);
-        return;
-      }
-
-      setMsg($("pwMsg"), "Password reset OK. Redirecting you to login to change it…", true);
-
-      // Your worker flips mustChangePassword in KV when user resets themselves,
-      // so kick them back to index to do /auth/change-password
-      setTimeout(() => location.href = "./index.html", 700);
-    } finally {
-      setBusy(btn, false);
-    }
-  }
-
   // ====== events ======
   $("btnLogout").addEventListener("click", async () => {
     await api("/auth/logout", { method:"POST" });
@@ -631,55 +649,122 @@
     setMsg($("palletMsg"), "Refreshed config.", true);
   });
 
-  $("btnResetSelf").addEventListener("click", resetSelfPassword);
-  $("btnClearPw").addEventListener("click", () => { $("pw_newTemp").value = ""; setMsg($("pwMsg"), "", true); });
-
   $("btnLoadPallet").addEventListener("click", loadPallet);
   $("btnSavePallet").addEventListener("click", savePallet);
+
   $("btnAddRow").addEventListener("click", () => {
     if (!CURRENT_PALLET) return setMsg($("palletMsg"), "Load a pallet first.", false);
     addBlankRow();
   });
+
   $("btnClearRows").addEventListener("click", () => {
     if (!CURRENT_PALLET) return setMsg($("palletMsg"), "Load a pallet first.", false);
-    renderItems([]);
+    renderItems([{ itemNo:"", description:"", bpc: 1, cases: 0, each: 0 }]);
   });
 
   $("itemsTbody").addEventListener("input", (e) => {
     if (e.target.matches(".i_bpc,.i_cases,.i_each")) updateUnitsSummary();
   });
 
-  $("itemsTbody").addEventListener("click", (e) => {
-    const btn = e.target.closest("button");
-    if (!btn) return;
-    const act = btn.getAttribute("data-act");
-    if (act === "delRow") {
-      const tr = btn.closest("tr[data-idx]");
-      if (!tr) return;
-      tr.remove();
-      updateUnitsSummary();
-      // re-index by re-rendering from UI
-      renderItems(getItemsFromUI());
+  // Catalog dropdown behavior + auto-add row on description finish
+  document.addEventListener("click", (e) => {
+    // Close any open suggestion boxes if click outside them
+    const boxes = Array.from(document.querySelectorAll(".suggestBox"));
+    for (const box of boxes) {
+      const wrap = box.closest(".suggestWrap");
+      if (!wrap) continue;
+      if (!wrap.contains(e.target)) box.style.display = "none";
     }
   });
 
-  $("btnLoadHistory").addEventListener("click", loadHistory);
-  $("btnClearHistory").addEventListener("click", () => {
-    $("histTbody").innerHTML = `<tr><td colspan="5" class="muted">No history loaded.</td></tr>`;
-    setMsg($("histMsg"), "", true);
-  });
-
-  $("histTbody").addEventListener("click", async (e) => {
+  $("itemsTbody").addEventListener("click", async (e) => {
     const btn = e.target.closest("button");
-    if (!btn) return;
-    if (btn.getAttribute("data-act") !== "openRev") return;
-    const pallet = Math.trunc(Number(btn.getAttribute("data-pallet")));
-    const rev = Math.trunc(Number(btn.getAttribute("data-rev")));
-    if (!Number.isInteger(pallet) || pallet < 1) return;
-    if (!Number.isInteger(rev) || rev < 0) return;
-    await loadRevision(pallet, rev);
+    if (btn) {
+      const act = btn.getAttribute("data-act");
+      if (act === "delRow") {
+        const tr = btn.closest("tr[data-idx]");
+        if (!tr) return;
+        tr.remove();
+        updateUnitsSummary();
+        // re-render from UI to re-index
+        const items = getItemsFromUI();
+        renderItems(items.length ? items : [{ itemNo:"", description:"", bpc: 1, cases: 0, each: 0 }]);
+        return;
+      }
+    }
+
+    // Handle suggestion click
+    const pick = e.target.closest(".suggestItem");
+    if (pick && pick.getAttribute("data-act") === "pickSuggest") {
+      const tr = pick.closest("tr[data-idx]");
+      if (!tr) return;
+      const itemNo = pick.getAttribute("data-itemno") || "";
+      const description = pick.getAttribute("data-desc") || "";
+      await applyCatalogPick(tr, { itemNo, description });
+    }
   });
 
+  $("itemsTbody").addEventListener("keydown", async (e) => {
+    const tr = e.target.closest("tr[data-idx]");
+    if (!tr) return;
+
+    // Enter on description = finish typing => auto add row
+    if (e.target.matches(".i_desc") && e.key === "Enter") {
+      e.preventDefault();
+      maybeAutoAddRowAfterFinishDesc(tr);
+      return;
+    }
+  });
+
+  $("itemsTbody").addEventListener("blur", (e) => {
+    const tr = e.target.closest("tr[data-idx]");
+    if (!tr) return;
+
+    // leaving description = finish typing => auto add row
+    if (e.target.matches(".i_desc")) {
+      // slight delay so suggestion click can register first
+      setTimeout(() => {
+        // If suggestion box is visible, don't auto-add yet
+        const box = getSuggestBox(tr);
+        const isOpen = box && box.style.display === "block";
+        if (!isOpen) maybeAutoAddRowAfterFinishDesc(tr);
+      }, 120);
+    }
+  }, true);
+
+  // Debounced catalog search on description input
+  $("itemsTbody").addEventListener("input", (e) => {
+    const descInput = e.target;
+    if (!descInput.matches(".i_desc")) return;
+
+    const tr = descInput.closest("tr[data-idx]");
+    if (!tr) return;
+
+    const q = descInput.value.trim();
+
+    let st = searchStateByRow.get(tr);
+    if (!st) st = { timer: null, lastQ: "" };
+    searchStateByRow.set(tr, st);
+
+    if (st.timer) clearTimeout(st.timer);
+
+    if (q.length < 2) {
+      closeSuggest(tr);
+      return;
+    }
+
+    st.timer = setTimeout(async () => {
+      try {
+        const results = await searchCatalog(q);
+        renderSuggestions(tr, results);
+      } catch {
+        // fail silently
+        closeSuggest(tr);
+      }
+    }, 180);
+  });
+
+  // ====== bulk clear events ======
   $("btnBulkClear").addEventListener("click", bulkClear);
   $("btnClearBulkBox").addEventListener("click", () => {
     $("clearText").value = "";
@@ -692,8 +777,6 @@
     ME = await guardEmployee();
     if (!ME) return;
     await loadConfig();
-
-    // nice default
     $("savedBy").value = ME.username || "";
     $("clearSavedBy").value = ME.username || "";
   })();
