@@ -455,6 +455,25 @@
   }
 
   // ====== Catalog + BPC override logic ======
+  // Simple in-page cache so you don't get prompted again in this session
+  const BPC_CACHE = new Map(); // itemNo -> bpc
+  
+  function setBpcEverywhere(itemNo, bpc) {
+    const want = String(itemNo || "").trim();
+    const val = Math.trunc(Number(bpc));
+    if (!want || !Number.isFinite(val) || val < 1) return;
+  
+    const rows = Array.from($("itemsTbody").querySelectorAll("tr[data-idx]"));
+    for (const r of rows) {
+      const ino = r.querySelector(".i_itemNo")?.value?.trim() || "";
+      if (ino === want) {
+        const bpcInput = r.querySelector(".i_bpc");
+        if (bpcInput) bpcInput.value = String(val);
+      }
+    }
+    updateUnitsSummary();
+  }
+  
   const searchStateByRow = new WeakMap(); // tr -> { timer, activeIndex, results, openQ }
 
   function getSuggestBox(tr) { return tr.querySelector(".suggestBox"); }
@@ -532,14 +551,41 @@
   }
 
   async function getBpcOverride(itemNo) {
-    const { data } = await api(`/bpc-overrides/get?itemNo=${encodeURIComponent(itemNo)}`);
+    const key = String(itemNo || "").trim();
+    if (!key) return { ok:false, found:false };
+  
+    // Cache hit first
+    if (BPC_CACHE.has(key)) {
+      return { ok:true, found:true, bpc: BPC_CACHE.get(key) };
+    }
+  
+    const { data } = await api(`/bpc-overrides/get?itemNo=${encodeURIComponent(key)}`);
     if (!data?.ok) return { ok:false, found:false };
-    return { ok:true, found: !!data.found, bpc: data.bpc };
+  
+    const found = !!data.found;
+    const bpc = Number(data.bpc);
+  
+    if (found && Number.isFinite(bpc) && Math.trunc(bpc) >= 1) {
+      const v = Math.trunc(bpc);
+      BPC_CACHE.set(key, v);
+      return { ok:true, found:true, bpc: v };
+    }
+  
+    return { ok:true, found:false };
   }
 
   async function upsertBpcOverride(itemNo, bpc) {
-    const { data } = await api(`/bpc-overrides/upsert`, { method:"POST", body:{ itemNo, bpc } });
-    return !!data?.ok;
+    const key = String(itemNo || "").trim();
+    const val = Math.trunc(Number(bpc));
+    if (!key || !Number.isFinite(val) || val < 1) return false;
+  
+    const { data } = await api(`/bpc-overrides/upsert`, { method:"POST", body:{ itemNo: key, bpc: val } });
+    if (!data?.ok) return false;
+  
+    // Cache it + update any rows currently showing this item
+    BPC_CACHE.set(key, val);
+    setBpcEverywhere(key, val);
+    return true;
   }
 
   function normalizeBpcInput(v) {
@@ -549,30 +595,35 @@
   }
 
   async function ensureBpcForItem(tr, itemNo) {
-    const o = await getBpcOverride(itemNo);
+    const key = String(itemNo || "").trim();
+    if (!key) return false;
+  
+    // Try cache / stored override first
+    const o = await getBpcOverride(key);
     if (o.ok && o.found && Number.isFinite(Number(o.bpc))) {
-      tr.querySelector(".i_bpc").value = Math.trunc(Number(o.bpc));
-      updateUnitsSummary();
+      const v = Math.trunc(Number(o.bpc));
+      BPC_CACHE.set(key, v);
+      setBpcEverywhere(key, v); // updates this row + any matching rows
       return true;
     }
-
-    const entered = prompt(`BPC not found for Item No ${itemNo}.\n\nPlease enter BPC (bottles per case):`, "12");
+  
+    // Not found => prompt the employee once
+    const entered = prompt(`BPC not found for Item No ${key}.\n\nPlease enter BPC (bottles per case):`, "12");
     if (!entered) return false;
-
+  
     const bpc = normalizeBpcInput(entered);
     if (!bpc) {
       alert("Invalid BPC. Must be a whole number >= 1.");
       return false;
     }
-
-    const ok = await upsertBpcOverride(itemNo, bpc);
+  
+    // Save to sheet + cache + update UI everywhere
+    const ok = await upsertBpcOverride(key, bpc);
     if (!ok) {
       alert("Could not save BPC override. Try again or contact manager.");
       return false;
     }
-
-    tr.querySelector(".i_bpc").value = bpc;
-    updateUnitsSummary();
+  
     return true;
   }
 
