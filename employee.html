@@ -43,22 +43,20 @@
     .tiny { font-size:12px; opacity:.9; }
     .badge { display:inline-block; padding:4px 8px; border-radius:999px; background:#eef2ff; border:1px solid #dbe4ff; font-size:12px; color:#1f3fbf; }
 
-    /* Catalog dropdown */
-    .suggestWrap { position: relative; }
-    .suggestBox {
+    /* GLOBAL floating dropdown (NOT inside table, so it won't be clipped) */
+    .global-dropdown {
       position:absolute;
-      left:0; right:0;
-      top: calc(100% + 6px);
+      z-index: 9999;
       background:#fff;
       border:1px solid #d6d8e0;
       border-radius:12px;
       box-shadow: 0 10px 24px rgba(0,0,0,.12);
-      z-index: 50;
       max-height: 260px;
       overflow:auto;
       display:none;
+      min-width: 220px;
     }
-    .suggestItem {
+    .global-dropdown .suggestItem {
       padding:10px 12px;
       cursor:pointer;
       display:flex;
@@ -66,13 +64,13 @@
       gap:4px;
       border-bottom:1px solid #f0f2f7;
     }
-    .suggestItem:last-child { border-bottom:0; }
-    .suggestItem:hover { background:#f3f6ff; }
-    .suggestItem.active { background:#eef2ff; }
-    .suggestTop { display:flex; align-items:baseline; justify-content:space-between; gap:10px; }
-    .suggestDesc { font-weight:600; }
-    .suggestMeta { font-size:12px; color:#666; }
-    .suggestCode { font-size:12px; color:#1f3fbf; }
+    .global-dropdown .suggestItem:last-child { border-bottom:0; }
+    .global-dropdown .suggestItem:hover { background:#f3f6ff; }
+    .global-dropdown .suggestItem.active { background:#eef2ff; }
+    .global-dropdown .suggestTop { display:flex; align-items:baseline; justify-content:space-between; gap:10px; }
+    .global-dropdown .suggestDesc { font-weight:600; }
+    .global-dropdown .suggestMeta { font-size:12px; color:#666; }
+    .global-dropdown .suggestCode { font-size:12px; color:#1f3fbf; }
   </style>
 </head>
 <body>
@@ -96,7 +94,7 @@
       <div class="muted">
         Load pallet header via <code>GET /public/pallets/:pallet</code>, edit items, and save via
         <code>POST /employee/pallets/:pallet/save</code>.
-        <br><span class="tiny">Description supports catalog suggestions; Item No + BPC are visually autofilled.</span>
+        <br><span class="tiny">Description supports catalog suggestions (floating dropdown). Item No + BPC are visually autofilled, and BPC saves update the table immediately + won’t reprompt later.</span>
       </div>
 
       <div class="row" style="margin-top:12px;">
@@ -184,6 +182,9 @@
       </div>
     </div>
   </main>
+
+  <!-- Global floating dropdown lives OUTSIDE the table -->
+  <div id="globalDropdown" class="global-dropdown" aria-hidden="true"></div>
 
 <script>
   // ====== CONFIG ======
@@ -337,14 +338,7 @@
       return `
         <tr data-idx="${idx}">
           <td><input class="i_itemNo" value="${itemNo}" placeholder="Item No" /></td>
-
-          <td>
-            <div class="suggestWrap">
-              <input class="i_desc" value="${description}" placeholder="Search description…" autocomplete="off" />
-              <div class="suggestBox" aria-hidden="true"></div>
-            </div>
-          </td>
-
+          <td><input class="i_desc" value="${description}" placeholder="Search description…" autocomplete="off" /></td>
           <td><input class="i_bpc right" inputmode="numeric" value="${bpc}" /></td>
           <td><input class="i_cases right" inputmode="numeric" value="${cases}" /></td>
           <td><input class="i_each right" inputmode="numeric" value="${each}" /></td>
@@ -455,14 +449,14 @@
   }
 
   // ====== Catalog + BPC override logic ======
-  // Simple in-page cache so you don't get prompted again in this session
+  // In-page cache so you don't get prompted again in this session
   const BPC_CACHE = new Map(); // itemNo -> bpc
-  
+
   function setBpcEverywhere(itemNo, bpc) {
     const want = String(itemNo || "").trim();
     const val = Math.trunc(Number(bpc));
     if (!want || !Number.isFinite(val) || val < 1) return;
-  
+
     const rows = Array.from($("itemsTbody").querySelectorAll("tr[data-idx]"));
     for (const r of rows) {
       const ino = r.querySelector(".i_itemNo")?.value?.trim() || "";
@@ -472,74 +466,6 @@
       }
     }
     updateUnitsSummary();
-  }
-  
-  const searchStateByRow = new WeakMap(); // tr -> { timer, activeIndex, results, openQ }
-
-  function getSuggestBox(tr) { return tr.querySelector(".suggestBox"); }
-
-  function openSuggest(tr) {
-    const box = getSuggestBox(tr);
-    if (!box) return;
-    box.style.display = "block";
-    box.setAttribute("aria-hidden", "false");
-  }
-
-  function closeSuggest(tr) {
-    const box = getSuggestBox(tr);
-    if (!box) return;
-    box.style.display = "none";
-    box.setAttribute("aria-hidden", "true");
-    box.innerHTML = "";
-    const st = searchStateByRow.get(tr);
-    if (st) { st.results = []; st.activeIndex = -1; }
-  }
-
-  function setActiveSuggestion(tr, idx) {
-    const box = getSuggestBox(tr);
-    if (!box) return;
-    const items = Array.from(box.querySelectorAll(".suggestItem[data-act='pickSuggest']"));
-    items.forEach((el, i) => el.classList.toggle("active", i === idx));
-    const st = searchStateByRow.get(tr) || {};
-    st.activeIndex = idx;
-    searchStateByRow.set(tr, st);
-
-    const active = items[idx];
-    if (active) active.scrollIntoView({ block: "nearest" });
-  }
-
-  function renderSuggestions(tr, results) {
-    const box = getSuggestBox(tr);
-    if (!box) return;
-
-    const list = Array.isArray(results) ? results : [];
-    const st = searchStateByRow.get(tr) || { activeIndex: -1, results: [] };
-    st.results = list;
-    st.activeIndex = list.length ? 0 : -1;
-    searchStateByRow.set(tr, st);
-
-    if (!list.length) {
-      box.innerHTML = `<div class="suggestItem"><div class="suggestMeta">No matches.</div></div>`;
-      openSuggest(tr);
-      return;
-    }
-
-    box.innerHTML = list.map((r) => {
-      const itemNo = esc(r.itemNo || "");
-      const description = esc(r.description || "");
-      return `
-        <div class="suggestItem" data-act="pickSuggest" data-itemno="${itemNo}" data-desc="${description}">
-          <div class="suggestTop">
-            <div class="suggestDesc">${description}</div>
-            <div class="suggestCode mono">${itemNo}</div>
-          </div>
-          <div class="suggestMeta">Enter to select • fills Item No + BPC</div>
-        </div>
-      `;
-    }).join("");
-
-    openSuggest(tr);
-    setActiveSuggestion(tr, st.activeIndex);
   }
 
   async function searchCatalog(q) {
@@ -553,24 +479,23 @@
   async function getBpcOverride(itemNo) {
     const key = String(itemNo || "").trim();
     if (!key) return { ok:false, found:false };
-  
-    // Cache hit first
+
     if (BPC_CACHE.has(key)) {
       return { ok:true, found:true, bpc: BPC_CACHE.get(key) };
     }
-  
+
     const { data } = await api(`/bpc-overrides/get?itemNo=${encodeURIComponent(key)}`);
     if (!data?.ok) return { ok:false, found:false };
-  
+
     const found = !!data.found;
     const bpc = Number(data.bpc);
-  
+
     if (found && Number.isFinite(bpc) && Math.trunc(bpc) >= 1) {
       const v = Math.trunc(bpc);
       BPC_CACHE.set(key, v);
       return { ok:true, found:true, bpc: v };
     }
-  
+
     return { ok:true, found:false };
   }
 
@@ -578,10 +503,10 @@
     const key = String(itemNo || "").trim();
     const val = Math.trunc(Number(bpc));
     if (!key || !Number.isFinite(val) || val < 1) return false;
-  
+
     const { data } = await api(`/bpc-overrides/upsert`, { method:"POST", body:{ itemNo: key, bpc: val } });
     if (!data?.ok) return false;
-  
+
     // Cache it + update any rows currently showing this item
     BPC_CACHE.set(key, val);
     setBpcEverywhere(key, val);
@@ -594,37 +519,108 @@
     return n;
   }
 
-  async function ensureBpcForItem(tr, itemNo) {
+  async function ensureBpcForItem(itemNo) {
     const key = String(itemNo || "").trim();
     if (!key) return false;
-  
-    // Try cache / stored override first
+
     const o = await getBpcOverride(key);
     if (o.ok && o.found && Number.isFinite(Number(o.bpc))) {
       const v = Math.trunc(Number(o.bpc));
       BPC_CACHE.set(key, v);
-      setBpcEverywhere(key, v); // updates this row + any matching rows
+      setBpcEverywhere(key, v);
       return true;
     }
-  
-    // Not found => prompt the employee once
+
     const entered = prompt(`BPC not found for Item No ${key}.\n\nPlease enter BPC (bottles per case):`, "12");
     if (!entered) return false;
-  
+
     const bpc = normalizeBpcInput(entered);
     if (!bpc) {
       alert("Invalid BPC. Must be a whole number >= 1.");
       return false;
     }
-  
-    // Save to sheet + cache + update UI everywhere
+
     const ok = await upsertBpcOverride(key, bpc);
     if (!ok) {
       alert("Could not save BPC override. Try again or contact manager.");
       return false;
     }
-  
+
     return true;
+  }
+
+  // ====== Global dropdown (floating) ======
+  const DD = $("globalDropdown");
+  const ddState = {
+    open: false,
+    anchor: null,      // input element (.i_desc)
+    tr: null,          // row
+    results: [],
+    activeIndex: -1,
+    lastQuery: "",
+    timer: null,
+  };
+
+  function ddHide() {
+    ddState.open = false;
+    ddState.anchor = null;
+    ddState.tr = null;
+    ddState.results = [];
+    ddState.activeIndex = -1;
+    DD.style.display = "none";
+    DD.setAttribute("aria-hidden", "true");
+    DD.innerHTML = "";
+  }
+
+  function ddReposition() {
+    if (!ddState.open || !ddState.anchor) return;
+    const rect = ddState.anchor.getBoundingClientRect();
+    const left = rect.left + window.scrollX;
+    const top = rect.bottom + window.scrollY + 6;
+    const width = rect.width;
+
+    DD.style.left = `${left}px`;
+    DD.style.top = `${top}px`;
+    DD.style.width = `${width}px`;
+  }
+
+  function ddSetActive(idx) {
+    const items = Array.from(DD.querySelectorAll(".suggestItem[data-act='pickSuggest']"));
+    items.forEach((el, i) => el.classList.toggle("active", i === idx));
+    ddState.activeIndex = idx;
+    const active = items[idx];
+    if (active) active.scrollIntoView({ block: "nearest" });
+  }
+
+  function ddRender(anchorInput, tr, results) {
+    ddState.open = true;
+    ddState.anchor = anchorInput;
+    ddState.tr = tr;
+    ddState.results = Array.isArray(results) ? results : [];
+    ddState.activeIndex = ddState.results.length ? 0 : -1;
+
+    if (!ddState.results.length) {
+      DD.innerHTML = `<div class="suggestItem"><div class="suggestMeta">No matches.</div></div>`;
+    } else {
+      DD.innerHTML = ddState.results.map((r) => {
+        const itemNo = esc(r.itemNo || "");
+        const description = esc(r.description || "");
+        return `
+          <div class="suggestItem" data-act="pickSuggest" data-itemno="${itemNo}" data-desc="${description}">
+            <div class="suggestTop">
+              <div class="suggestDesc">${description}</div>
+              <div class="suggestCode mono">${itemNo}</div>
+            </div>
+            <div class="suggestMeta">Enter to select • fills Item No + BPC</div>
+          </div>
+        `;
+      }).join("");
+    }
+
+    DD.style.display = "block";
+    DD.setAttribute("aria-hidden", "false");
+    ddReposition();
+    if (ddState.activeIndex >= 0) ddSetActive(ddState.activeIndex);
   }
 
   async function applyCatalogPick(tr, { itemNo, description }) {
@@ -634,30 +630,25 @@
     itemInput.value = itemNo;
     descInput.value = description;
 
-    closeSuggest(tr);
+    ddHide();
 
-    await ensureBpcForItem(tr, itemNo);
+    await ensureBpcForItem(itemNo);
 
     tr.querySelector(".i_cases")?.focus();
-
     maybeAutoAddRowAfterFinishDesc(tr);
   }
 
   function maybeAutoAddRowAfterFinishDesc(tr) {
     if (!isLastRow(tr)) return;
     if (isRowBlank(tr)) return;
-
-    // IMPORTANT: only auto-add if row is actually "committed" (has itemNo + desc)
     if (!isRowReadyToCommit(tr)) return;
-
     addBlankRow();
   }
 
-  // If itemNo typed manually, enforce BPC on blur
   async function maybeEnsureBpcAfterItemNo(tr) {
     const itemNo = tr.querySelector(".i_itemNo")?.value?.trim() || "";
     if (!itemNo) return;
-    await ensureBpcForItem(tr, itemNo);
+    await ensureBpcForItem(itemNo);
   }
 
   // ====== bulk clear ======
@@ -739,15 +730,17 @@
     if (e.target.matches(".i_bpc,.i_cases,.i_each")) updateUnitsSummary();
   });
 
-  // Close suggestion boxes on outside click
+  // Global dropdown: click-outside closes it
   document.addEventListener("mousedown", (e) => {
-    const boxes = Array.from(document.querySelectorAll(".suggestBox"));
-    for (const box of boxes) {
-      const wrap = box.closest(".suggestWrap");
-      if (!wrap) continue;
-      if (!wrap.contains(e.target)) box.style.display = "none";
+    if (DD.style.display === "block") {
+      const isDescInput = e.target && e.target.classList && e.target.classList.contains("i_desc");
+      if (!DD.contains(e.target) && !isDescInput) ddHide();
     }
   });
+
+  // Keep dropdown aligned while scrolling/resizing
+  window.addEventListener("scroll", () => ddReposition(), true);
+  window.addEventListener("resize", () => ddReposition());
 
   // Table clicks: delete row or pick suggestion
   $("itemsTbody").addEventListener("click", async (e) => {
@@ -755,6 +748,7 @@
     if (btn) {
       const act = btn.getAttribute("data-act");
       if (act === "delRow") {
+        ddHide();
         const tr = btn.closest("tr[data-idx]");
         if (!tr) return;
         tr.remove();
@@ -767,7 +761,7 @@
 
     const pick = e.target.closest(".suggestItem");
     if (pick && pick.getAttribute("data-act") === "pickSuggest") {
-      const tr = pick.closest("tr[data-idx]");
+      const tr = ddState.tr;
       if (!tr) return;
       const itemNo = pick.getAttribute("data-itemno") || "";
       const description = pick.getAttribute("data-desc") || "";
@@ -775,81 +769,7 @@
     }
   });
 
-  // Keyboard nav for dropdown + finish typing behavior
-  $("itemsTbody").addEventListener("keydown", async (e) => {
-    const tr = e.target.closest("tr[data-idx]");
-    if (!tr) return;
-
-    // Description key handling
-    if (e.target.matches(".i_desc")) {
-      const box = getSuggestBox(tr);
-      const isOpen = box && box.style.display === "block";
-      const st = searchStateByRow.get(tr) || { activeIndex: -1, results: [] };
-
-      if (isOpen && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
-        e.preventDefault();
-        const n = (st.results || []).length;
-        if (!n) return;
-        const next = e.key === "ArrowDown"
-          ? Math.min((st.activeIndex ?? 0) + 1, n - 1)
-          : Math.max((st.activeIndex ?? 0) - 1, 0);
-        setActiveSuggestion(tr, next);
-        return;
-      }
-
-      if (isOpen && e.key === "Enter") {
-        e.preventDefault();
-        const n = (st.results || []).length;
-        if (!n) {
-          closeSuggest(tr);
-          maybeAutoAddRowAfterFinishDesc(tr);
-          return;
-        }
-        const idx = Math.max(0, Math.min(st.activeIndex ?? 0, n - 1));
-        const r = st.results[idx];
-        if (r) await applyCatalogPick(tr, { itemNo: r.itemNo, description: r.description });
-        return;
-      }
-
-      // Enter without open dropdown => treat as "finished typing"
-      if (!isOpen && e.key === "Enter") {
-        e.preventDefault();
-        maybeAutoAddRowAfterFinishDesc(tr);
-        return;
-      }
-
-      // Escape closes dropdown
-      if (isOpen && e.key === "Escape") {
-        e.preventDefault();
-        closeSuggest(tr);
-        return;
-      }
-    }
-  });
-
-  // Blur behavior: leaving description = "finished typing" (but only if dropdown not open)
-  $("itemsTbody").addEventListener("blur", (e) => {
-    const tr = e.target.closest("tr[data-idx]");
-    if (!tr) return;
-
-    if (e.target.matches(".i_desc")) {
-      setTimeout(() => {
-        const box = getSuggestBox(tr);
-        const isOpen = box && box.style.display === "block";
-        if (!isOpen) maybeAutoAddRowAfterFinishDesc(tr);
-      }, 120);
-    }
-
-    // Leaving itemNo => if manually typed, ensure BPC (override/prompt)
-    if (e.target.matches(".i_itemNo")) {
-      setTimeout(() => {
-        // don't run if row is blank
-        if (!isRowBlank(tr)) maybeEnsureBpcAfterItemNo(tr);
-      }, 0);
-    }
-  }, true);
-
-  // Debounced catalog search on description input
+  // Debounced catalog search on description input (global dropdown)
   $("itemsTbody").addEventListener("input", (e) => {
     const descInput = e.target;
     if (!descInput.matches(".i_desc")) return;
@@ -859,26 +779,86 @@
 
     const q = descInput.value.trim();
 
-    let st = searchStateByRow.get(tr);
-    if (!st) st = { timer: null, activeIndex: -1, results: [], openQ: "" };
-    searchStateByRow.set(tr, st);
+    ddState.anchor = descInput;
+    ddState.tr = tr;
 
-    if (st.timer) clearTimeout(st.timer);
+    if (ddState.timer) clearTimeout(ddState.timer);
 
     if (q.length < 2) {
-      closeSuggest(tr);
+      ddHide();
       return;
     }
 
-    st.timer = setTimeout(async () => {
+    ddState.timer = setTimeout(async () => {
       try {
         const results = await searchCatalog(q);
-        renderSuggestions(tr, results);
+        ddRender(descInput, tr, results);
       } catch {
-        closeSuggest(tr);
+        ddHide();
       }
     }, 180);
   });
+
+  // Keyboard nav for dropdown + finish typing behavior
+  $("itemsTbody").addEventListener("keydown", async (e) => {
+    const tr = e.target.closest("tr[data-idx]");
+    if (!tr) return;
+
+    if (e.target.matches(".i_desc")) {
+      const isOpen = DD.style.display === "block" && ddState.tr === tr;
+      const n = (ddState.results || []).length;
+
+      if (isOpen && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+        e.preventDefault();
+        if (!n) return;
+        const next = e.key === "ArrowDown"
+          ? Math.min((ddState.activeIndex ?? 0) + 1, n - 1)
+          : Math.max((ddState.activeIndex ?? 0) - 1, 0);
+        ddSetActive(next);
+        return;
+      }
+
+      if (e.key === "Enter") {
+        e.preventDefault();
+        if (isOpen && n) {
+          const idx = Math.max(0, Math.min(ddState.activeIndex ?? 0, n - 1));
+          const r = ddState.results[idx];
+          if (r) await applyCatalogPick(tr, { itemNo: r.itemNo, description: r.description });
+          return;
+        }
+        // Enter without open dropdown => treat as "finished typing"
+        ddHide();
+        maybeAutoAddRowAfterFinishDesc(tr);
+        return;
+      }
+
+      if (isOpen && e.key === "Escape") {
+        e.preventDefault();
+        ddHide();
+        return;
+      }
+    }
+  });
+
+  // Blur behavior
+  $("itemsTbody").addEventListener("blur", (e) => {
+    const tr = e.target.closest("tr[data-idx]");
+    if (!tr) return;
+
+    if (e.target.matches(".i_desc")) {
+      // allow suggestion click to register
+      setTimeout(() => {
+        const isOpen = DD.style.display === "block" && ddState.tr === tr;
+        if (!isOpen) maybeAutoAddRowAfterFinishDesc(tr);
+      }, 120);
+    }
+
+    if (e.target.matches(".i_itemNo")) {
+      setTimeout(() => {
+        if (!isRowBlank(tr)) maybeEnsureBpcAfterItemNo(tr);
+      }, 0);
+    }
+  }, true);
 
   // ====== bulk clear events ======
   $("btnBulkClear").addEventListener("click", bulkClear);
