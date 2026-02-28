@@ -1,397 +1,205 @@
-
 <!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Warehouse Pallet Manager — v1.7</title>
-  <meta name="description" content="Assign items to pallet locations and view by location. Persistent in the browser.">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="assets/css/styles.css" />
-  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js" defer></script>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Warehouse — Login</title>
+  <style>
+    :root { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
+    body { margin: 0; background: #f6f7fb; }
+    .wrap { max-width: 440px; margin: 64px auto; padding: 20px; }
+    .card { background: #fff; border-radius: 14px; padding: 18px; box-shadow: 0 8px 24px rgba(0,0,0,.08); }
+    h1 { font-size: 20px; margin: 0 0 10px; }
+    .muted { color: #555; font-size: 13px; line-height: 1.35; }
+    label { display: block; font-size: 13px; margin: 14px 0 6px; color: #222; }
+    input { width: 100%; padding: 10px 12px; border: 1px solid #d6d8e0; border-radius: 10px; font-size: 14px; }
+    button { width: 100%; margin-top: 14px; padding: 10px 12px; border: 0; border-radius: 10px; font-size: 14px; cursor: pointer; }
+    button.primary { background: #1f6feb; color: white; }
+    button.ghost { background: transparent; color: #1f6feb; border: 1px solid #cfe0ff; }
+    .row { display: flex; gap: 10px; }
+    .row > * { flex: 1; }
+    .msg { margin-top: 12px; font-size: 13px; }
+    .err { color: #b42318; }
+    .ok { color: #067647; }
+    .hidden { display:none !important; }
+
+    /* modal */
+    .modalBack {
+      position: fixed; inset: 0; background: rgba(0,0,0,.35);
+      display: flex; align-items: center; justify-content: center; padding: 18px;
+    }
+    .modal {
+      width: min(520px, 100%); background: white; border-radius: 14px;
+      padding: 16px; box-shadow: 0 12px 36px rgba(0,0,0,.2);
+    }
+    .modal h2 { margin: 0 0 8px; font-size: 18px; }
+  </style>
 </head>
 <body>
-  <header class="site-header">
-    <div class="container header-row">
-      <h1>Warehouse Pallet Manager <small>v1.7 — with Breakers Log</small></h1>
-      <div class="actions">
-        <span id="admin-status" class="pill">Admin: checking…</span>
-        <button id="btn-admin-panel" class="btn ghost" title="Open Admin tools">Admin</button>
-        <button id="btn-export" class="btn ghost" title="Export a backup JSON of all data">Backup</button>
-        <label class="btn ghost">
-          Restore
-          <input id="restore-file" type="file" accept=".json" hidden>
-        </label>
-      </div>
-    </div>
-  </header>
+  <div class="wrap">
+    <div class="card">
+      <h1>Warehouse Login</h1>
+      <div class="muted">Sign in to access pallets & manager tools.</div>
 
-  <main class="container">
-    <section id="security-setup" class="card" style="display:none">
-      <h2>Admin Password Setup (one-time)</h2>
-      <p>Set an admin password to unlock Admin features. This is saved locally and persists across reloads and backups.</p>
-      <div class="grid2">
-        <div>
-          <label>New password</label>
-          <input id="pw1" type="password" autocomplete="new-password" placeholder="Enter password">
-        </div>
-        <div>
-          <label>Confirm password</label>
-          <input id="pw2" type="password" autocomplete="new-password" placeholder="Re-enter password">
-        </div>
-      </div>
-      <div class="row" style="margin-top:.5rem">
-        <button id="btn-set-password" class="btn">Save password</button>
-      </div>
-      <p class="muted small">There is no reset in this version. We can add one if needed.</p>
-    </section>
+      <label>Username</label>
+      <input id="username" autocomplete="username" />
 
-    <section id="admin-lock" class="card" style="display:none">
-      <div class="row between">
-        <h2>Unlock Admin</h2>
-      </div>
-      <div class="grid2">
-        <div>
-          <label>Password</label>
-          <input id="unlock-password" type="password" autocomplete="current-password" placeholder="Enter admin password">
-        </div>
-        <div class="row" style="align-items:flex-end">
-          <button id="btn-unlock-admin" class="btn">Unlock</button>
-        </div>
-      </div>
-      <p class="muted small">Admin stays unlocked for this tab/session until you close or reload.</p>
-    </section>
+      <label>Password</label>
+      <input id="password" type="password" autocomplete="current-password" />
 
-    <section id="step-pallet-count" class="card">
-      <h2>Step 1 — Set total pallets (one-time)</h2>
-      <p>Enter how many pallet locations exist in your warehouse. <strong>This cannot be changed later.</strong></p>
+      <button class="primary" id="btnLogin">Sign in</button>
+
       <div class="row">
-        <input id="pallet-count-input" type="number" min="1" step="1" placeholder="e.g., 150" />
-        <button id="save-pallet-count" class="btn">Save</button>
-      </div>
-      <p id="pallet-count-status" class="muted"></p>
-    </section>
-
-    <section id="step-catalog" class="card">
-      <h2>Step 2 — Load item catalog (Excel/CSV)</h2>
-      <p>Upload your items sheet (.xls, .xlsx, or .csv). Exactly 15 columns are expected in this order:<br>
-         <code>Store</code>, <code>Item No.</code>, <code>Description</code>, <code>Subdep</code>, <code>Pack Size</code>, <code>Qty On Hand</code>, <code>Qty On PO</code>, <code>Avg Cost</code>, <code>Base Price</code>, <code>Gross M</code>, <code>Gross M %</code>, <code>Tax No.</code>, <code>Vendor</code>, <code>Track Item</code>, <code>Sales Rep</code>.
-      </p>
-      <div class="row wrap">
-        <label class="btn">
-          Choose file (.xls, .xlsx, or .csv)
-          <input id="catalog-file" type="file" accept=".xls,.xlsx,.csv" hidden>
-        </label>
-        <button id="btn-clear-catalog" class="btn ghost">Clear catalog</button>
-        <span id="catalog-status" class="muted"></span>
-      </div>
-    </section>
-
-    <section id="step-workbench" class="card">
-      <h2>Step 3 — Assign & view by pallet location</h2>
-      <div class="workbench">
-        <div class="controls">
-          <div class="row">
-            <label>Pallet location #</label>
-            <input id="pallet-number" type="number" min="1" step="1" placeholder="Enter a location number">
-            <button id="btn-load-pallet" class="btn">Load</button>
-          </div>
-
-          <div class="row">
-            <label>Find item by description</label>
-            <div class="searchbox">
-              <input id="search-desc" type="text" placeholder="Type to search...">
-              <div id="search-results" class="dropdown"></div>
-            </div>
-          </div>
-
-          <div id="entry-form" class="grid2">
-            <div>
-              <label>Item No.</label>
-              <input id="entry-itemno" type="text" disabled>
-            </div>
-            <div>
-              <label>Description</label>
-              <input id="entry-desc" type="text" disabled>
-            </div>
-            <div>
-              <label><strong>bts/case</strong> (auto)</label>
-              <input id="entry-bpc" type="number" min="1" step="1" disabled>
-            </div>
-            <div>
-              <label>Total case qty</label>
-              <input id="entry-cases" type="number" min="0" step="1" placeholder="e.g., 5">
-            </div>
-            <div>
-              <label>Total unit qty (auto)</label>
-              <input id="entry-units" type="number" min="0" step="1" disabled>
-            </div>
-            <div class="row">
-              <button id="btn-add-line" class="btn">Add / Update pallet</button>
-              <button id="btn-clear-line" class="btn ghost">Clear</button>
-            </div>
-          </div>
-        </div>
-
-        <div class="table-area">
-          <div class="row between">
-            <h3>Items at location <span id="current-pallet-label">—</span></h3>
-            <div class="row gap">
-              <button id="btn-week-log" class="btn ghost" title="Show past week of edits for this pallet">Past 7 Days</button>
-              <span id="save-indicator" class="pill">Saved</span>
-              <button id="btn-save" class="btn success">Save (overwrite)</button>
-              <button id="btn-clear-location" class="btn danger">Clear location</button>
-              <button id="btn-clear-indicators" class="btn ghost" title="Hide 'updated' markers for this session">Clear indicators</button>
-            </div>
-          </div>
-          <div id="pallet-meta" class="muted small"></div>
-          <table id="pallet-table">
-            <thead>
-              <tr>
-                <th>Item No.</th>
-                <th>Description</th>
-                <th>bts/case</th>
-                <th>Total case qty</th>
-                <th>Total unit qty</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody></tbody>
-          </table>
-        </div>
-      </div>
-    </section>
-
-    <section id="search-pallets" class="card">
-      <h2>Search pallets by description</h2>
-      <p>Find all pallets that contain items matching your description. Searches <em>saved</em> pallets.</p>
-      <div class="grid2">
-        <div>
-          <label>Description contains</label>
-          <div class="searchbox">
-            <input id="search-all-desc" type="text" placeholder="Type to search descriptions...">
-            <div id="search-all-results" class="dropdown"></div>
-          </div>
-        </div>
-        <div class="row" style="align-items:flex-end">
-          <button id="btn-search-all" class="btn">Search</button>
-          <button id="btn-search-all-clear" class="btn ghost">Clear</button>
-        </div>
-      </div>
-      <div class="table-area" style="margin-top:.75rem">
-        <table id="search-all-table">
-          <thead>
-            <tr>
-              <th style="width:140px">Item No.</th>
-              <th>Description</th>
-              <th style="width:120px">Pallet #</th>
-              <th style="width:110px">bts/case</th>
-              <th style="width:120px">Cases</th>
-              <th style="width:120px">Units</th>
-              <th style="width:120px"></th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-        </table>
-      </div>
-      <div id="search-all-summary" class="muted" style="margin-top:.6rem"></div>
-    </section>
-
-
-    <section id="breakers-log" class="card">
-      <h2>Breakers Log — broken / spoiled / unsellable</h2>
-      <p>Record bottles that are no longer sellable. Quantities here are always in <strong>units (bottles)</strong>, not cases.</p>
-      <div class="grid2">
-        <div>
-          <label>Find item by description</label>
-          <div class="searchbox">
-            <input id="breakers-search" type="text" placeholder="Type to search catalog...">
-            <div id="breakers-search-results" class="dropdown"></div>
-          </div>
-          <div class="grid2" style="margin-top:.75rem">
-            <div>
-              <label>Item No.</label>
-              <input id="breakers-itemno" type="text" disabled>
-            </div>
-            <div>
-              <label>Description</label>
-              <input id="breakers-desc" type="text" disabled>
-            </div>
-          </div>
-          <div class="grid2" style="margin-top:.75rem">
-            <div>
-              <label>Units (bottles) affected</label>
-              <input id="breakers-units" type="number" min="1" step="1" placeholder="e.g., 3">
-            </div>
-          </div>
-        </div>
-        <div>
-          <div class="grid2">
-            <div>
-              <label>Category</label>
-              <select id="breakers-category" style="width:100%;padding:.7rem .8rem;border-radius:10px;border:1px solid var(--border);background:#0f1318;color:#e6edf3;outline:none;">
-                <option value="broken">Broken</option>
-                <option value="spoiled">Spoiled</option>
-                <option value="unsellable">Unsellable (other)</option>
-              </select>
-            </div>
-            <div>
-              <label>Employee</label>
-              <input id="breakers-employee" type="text" placeholder="Name of employee">
-            </div>
-          </div>
-          <div class="grid2" style="margin-top:.75rem">
-            <div>
-              <label>Date</label>
-              <input id="breakers-date" type="date">
-            </div>
-          </div>
-          <div class="row" style="margin-top:1rem;align-items:flex-end">
-            <button id="btn-breakers-save" class="btn">Save breaker entry</button>
-          </div>
-        </div>
+        <button class="ghost" id="btnMe" type="button">Check session</button>
+        <button class="ghost" id="btnLogout" type="button">Logout</button>
       </div>
 
-      <div id="breakers-admin-totals" style="margin-top:1.25rem">
-        <h3>Admin totals for this item</h3>
-        <p class="muted" style="font-size:.8rem">Totals reflect all breaker entries for the selected item. Editing and saving is admin-only.</p>
-        <div class="grid2">
-          <div>
-            <label>Total broken (units)</label>
-            <input id="breakers-total-broken" type="number" min="0" step="1">
-          </div>
-          <div>
-            <label>Total spoiled (units)</label>
-            <input id="breakers-total-spoiled" type="number" min="0" step="1">
-          </div>
-        </div>
-        <div class="grid2" style="margin-top:.75rem">
-          <div>
-            <label>Total unsellable (units)</label>
-            <input id="breakers-total-unsellable" type="number" min="0" step="1">
-          </div>
-        </div>
-        <div class="row" style="margin-top:.75rem;align-items:flex-end">
-          <button id="btn-breakers-totals-save" class="btn">Save adjusted totals (admin)</button>
-        </div>
-      </div>
-
-      <h3 style="margin-top:1.25rem">Recent breaker entries</h3>
-      <div class="table-area">
-        <table id="breakers-recent-table">
-          <thead>
-            <tr>
-              <th style="width:120px">Item No.</th>
-              <th>Description</th>
-              <th style="width:140px">Category</th>
-              <th style="width:120px">Units</th>
-              <th style="width:160px">Employee</th>
-              <th style="width:180px">Date</th>
-            </tr>
-          </thead>
-          <tbody id="breakers-recent-body"></tbody>
-        </table>
-      </div>
-    </section>
-
-    <section id="breakers-report" class="card">
-      <h2>Breakers Report</h2>
-      <p>View totals for broken, spoiled, and unsellable bottles within a date range.</p>
-      <div class="grid2">
-        <div>
-          <label>From date</label>
-          <input id="breakers-from" type="date">
-        </div>
-        <div>
-          <label>To date</label>
-          <input id="breakers-to" type="date">
-        </div>
-      </div>
-      <div class="row" style="align-items:flex-end;margin-top:.75rem">
-        <button id="btn-breakers-run" class="btn">Run report</button>
-        <button id="btn-breakers-export" class="btn ghost">Download Excel</button>
-        <button id="btn-breakers-clear" class="btn ghost">Clear</button>
-      </div>
-
-      <div class="table-area" style="margin-top:.75rem">
-        <table id="breakers-report-table">
-          <thead>
-            <tr>
-              <th style="width:120px">Item No.</th>
-              <th>Description</th>
-              <th style="width:110px">Broken</th>
-              <th style="width:110px">Spoiled</th>
-              <th style="width:130px">Unsellable</th>
-              <th style="width:130px">Total Qty</th>
-              <th style="width:120px">Cost / Ea</th>
-              <th style="width:140px">Total Cost</th>
-              <th style="width:140px">Sales Rep</th>
-              <th style="width:160px">Vendor</th>
-            </tr>
-          </thead>
-          <tbody id="breakers-report-body"></tbody>
-        </table>
-      </div>
-      <div id="breakers-report-summary" class="muted" style="margin-top:.6rem"></div>
-    </section>
-
-
-    <section id="admin-bpc" class="card" style="display:none">
-      <div class="row between">
-        <h2>Admin — Edit bts/case</h2>
-        <div class="row">
-          <button id="btn-lock-admin" class="btn ghost">Lock</button>
-        </div>
-      </div>
-      <p class="muted">Save & Cascade updates bts/case and marks any affected rows as <span class="badge info">updated</span> for this session.</p>
-      <div class="grid2">
-        <div>
-          <label>Search (Item No. or Description)</label>
-          <div style="position: relative; width: 100%; max-width: 400px;">
-  <input id="admin-search" type="text" placeholder="e.g., 12345 or 'Don Julio Blanco'">
-  <div id="admin-search-drop" class="dropdown"></div>
-</div></div>
-        <div class="row" style="align-items:flex-end">
-          <button id="admin-search-btn" class="btn">Search</button>
-          <button id="admin-clear-btn" class="btn ghost">Clear</button>
-        </div>
-      </div>
-      <div class="table-area" style="margin-top:.75rem">
-        <table id="admin-table">
-          <thead>
-            <tr>
-              <th style="width:140px">Item No.</th>
-              <th>Description</th>
-              <th style="width:160px">Pack Size</th>
-              <th style="width:160px">bts/case</th>
-              <th style="width:220px"></th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-        </table>
-      </div>
-      <div id="search-all-summary" class="muted" style="margin-top:.6rem"></div>
-    </section>
-  </main>
-
-  <footer class="container muted small">
-    <p><strong>Notes:</strong> The description search suggestions now expand <em>under</em> the field, full width.</p>
-  </footer>
-
-  
-  <!-- Past 7 Days Log Modal -->
-  <div id="week-log-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.45); align-items:center; justify-content:center; z-index:9999;">
-    <div style="background:#14181d; color:#e6edf3; border:1px solid #243042; border-radius:14px; padding:16px; max-width:560px; width:92%; box-shadow:0 18px 40px rgba(0,0,0,.45)">
-      <h3 style="margin-top:0">Past 7 Days — Pallet Log</h3>
-      <div id="week-log-content" style="max-height:320px; overflow:auto; border:1px solid #243042; border-radius:10px; padding:8px; background:#0f1318"></div>
-      <div style="text-align:right; margin-top:10px;">
-        <button id="week-log-close" class="btn">Close</button>
-      </div>
+      <div id="msg" class="msg"></div>
     </div>
   </div>
 
-  <script src="assets/js/app.js"></script>
+  <!-- Must Change Password Modal -->
+  <div id="mcpBack" class="modalBack hidden" role="dialog" aria-modal="true">
+    <div class="modal">
+      <h2>Password update required</h2>
+      <div class="muted">You must change your password before using the app.</div>
+
+      <label>Old password</label>
+      <input id="oldPw" type="password" autocomplete="current-password" />
+
+      <label>New password</label>
+      <input id="newPw" type="password" autocomplete="new-password" />
+
+      <label>Confirm new password</label>
+      <input id="newPw2" type="password" autocomplete="new-password" />
+
+      <button class="primary" id="btnChangePw">Save new password</button>
+      <button class="ghost" id="btnMcpLogout" type="button">Logout</button>
+
+      <div id="mcpMsg" class="msg"></div>
+    </div>
+  </div>
+
+<script>
+  // ====== CONFIG ======
+  const API_BASE = "https://queensims.anthonycr2001.workers.dev"; // <-- change if needed
+
+  // ====== helpers ======
+  const $ = (id) => document.getElementById(id);
+  const msg = (text, ok=false) => { $("msg").textContent = text || ""; $("msg").className = "msg " + (ok ? "ok" : "err"); };
+  const mcpMsg = (text, ok=false) => { $("mcpMsg").textContent = text || ""; $("mcpMsg").className = "msg " + (ok ? "ok" : "err"); };
+
+  async function api(path, { method="GET", body=null } = {}) {
+    const url = API_BASE + path;
+    const opts = {
+      method,
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+    };
+    if (body) opts.body = JSON.stringify(body);
+    const res = await fetch(url, opts);
+    const data = await res.json().catch(() => ({}));
+    return { status: res.status, data };
+  }
+
+  function openMcpModal() {
+    $("mcpBack").classList.remove("hidden");
+    $("oldPw").value = "";
+    $("newPw").value = "";
+    $("newPw2").value = "";
+    mcpMsg("");
+  }
+  function closeMcpModal() { $("mcpBack").classList.add("hidden"); }
+
+  async function checkSessionAndRoute() {
+    const { data } = await api("/me");
+    if (!data?.ok) return;
+
+    // Must-change-password? force modal and stop.
+    if (String(data.me?.mustChangePassword || "").toLowerCase() === "true") {
+      openMcpModal();
+      return;
+    }
+
+    // Route by role
+    const role = String(data.me?.role || "").toLowerCase();
+    if (role === "manager") {
+      // next step: manager dashboard page
+      location.href = "./manager.html";
+    } else {
+      // next step: employee pallet page
+      location.href = "./employee.html";
+    }
+  }
+
+  // ====== actions ======
+  $("btnLogin").addEventListener("click", async () => {
+    msg("");
+    const username = $("username").value.trim();
+    const password = $("password").value;
+
+    if (!username || !password) return msg("Username + password required.");
+
+    const { data } = await api("/auth/login", { method:"POST", body:{ username, password } });
+
+    if (!data?.ok) return msg(data?.error || "LOGIN_FAILED");
+
+    // If they must change, show modal (don’t redirect yet)
+    if (String(data.me?.mustChangePassword || "").toLowerCase() === "true") {
+      msg("Signed in. Password change required.", true);
+      openMcpModal();
+      return;
+    }
+
+    msg("Signed in.", true);
+    // Route based on role
+    await checkSessionAndRoute();
+  });
+
+  $("btnMe").addEventListener("click", async () => {
+    msg("");
+    const { data } = await api("/me");
+    if (!data?.ok) return msg("No active session.");
+    msg(`Session OK: ${data.me.username} (${data.me.role})`, true);
+
+    if (String(data.me.mustChangePassword || "").toLowerCase() === "true") {
+      openMcpModal();
+    }
+  });
+
+  $("btnLogout").addEventListener("click", async () => {
+    await api("/auth/logout", { method:"POST" });
+    msg("Logged out.", true);
+  });
+
+  $("btnMcpLogout").addEventListener("click", async () => {
+    await api("/auth/logout", { method:"POST" });
+    closeMcpModal();
+    msg("Logged out.", true);
+  });
+
+  $("btnChangePw").addEventListener("click", async () => {
+    mcpMsg("");
+    const oldPassword = $("oldPw").value;
+    const newPassword = $("newPw").value;
+    const newPassword2 = $("newPw2").value;
+
+    if (!oldPassword || !newPassword) return mcpMsg("Old + new password required.");
+    if (newPassword !== newPassword2) return mcpMsg("New passwords do not match.");
+
+    const { data } = await api("/auth/change-password", { method:"POST", body:{ oldPassword, newPassword } });
+
+    if (!data?.ok) return mcpMsg(data?.error || "CHANGE_FAILED");
+
+    mcpMsg("Password updated. Redirecting…", true);
+    closeMcpModal();
+
+    // Route based on role now that mustChangePassword should be false
+    await checkSessionAndRoute();
+  });
+
+  // Auto-check on load (if user already has cookie)
+  checkSessionAndRoute();
+</script>
 </body>
 </html>
